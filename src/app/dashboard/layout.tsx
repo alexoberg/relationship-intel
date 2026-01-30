@@ -21,10 +21,12 @@ export default async function DashboardLayout({
     .single();
 
   return (
-    <div className="min-h-screen bg-gray-50 flex">
+    <div className="min-h-screen bg-dark-50 flex">
       <Sidebar user={user} profile={profile} />
-      <main className="flex-1 ml-64 p-8">
-        {children}
+      <main className="flex-1 ml-72 p-8">
+        <div className="max-w-7xl mx-auto">
+          {children}
+        </div>
       </main>
     </div>
   );

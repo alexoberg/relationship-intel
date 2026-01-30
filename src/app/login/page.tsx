@@ -2,8 +2,9 @@
 
 import { useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
-import { Mail, Loader2 } from 'lucide-react';
+import { Mail, Loader2, Users, ArrowLeft, Sparkles } from 'lucide-react';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -65,19 +66,33 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
-      <div className="max-w-md w-full">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">Relationship Intel</h1>
-          <p className="text-gray-600 mt-2">Sign in to access your network intelligence</p>
-        </div>
+    <div className="min-h-screen flex">
+      {/* Left side - Form */}
+      <div className="flex-1 flex items-center justify-center p-8">
+        <div className="w-full max-w-md">
+          {/* Back link */}
+          <Link href="/" className="inline-flex items-center gap-2 text-dark-500 hover:text-dark-700 mb-8 transition-colors">
+            <ArrowLeft className="w-4 h-4" />
+            <span className="text-sm">Back to home</span>
+          </Link>
 
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-8">
+          {/* Header */}
+          <div className="mb-8">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center shadow-lg shadow-primary-500/25">
+                <Users className="w-6 h-6 text-white" />
+              </div>
+              <span className="text-2xl font-bold text-dark-900">Relationship Intel</span>
+            </div>
+            <h1 className="text-3xl font-bold text-dark-900 mb-2">Welcome back</h1>
+            <p className="text-dark-500">Sign in to access your network intelligence</p>
+          </div>
+
           {/* Google Sign In */}
           <button
             onClick={handleGoogleLogin}
             disabled={loading}
-            className="w-full flex items-center justify-center gap-3 bg-white border border-gray-300 rounded-lg px-4 py-3 text-gray-700 font-medium hover:bg-gray-50 transition-colors disabled:opacity-50"
+            className="w-full flex items-center justify-center gap-3 bg-white border-2 border-dark-200 rounded-xl px-4 py-4 text-dark-700 font-medium hover:bg-dark-50 hover:border-dark-300 transition-all disabled:opacity-50"
           >
             <svg className="w-5 h-5" viewBox="0 0 24 24">
               <path
@@ -100,19 +115,20 @@ export default function LoginPage() {
             Continue with Google
           </button>
 
-          <div className="relative my-6">
+          {/* Divider */}
+          <div className="relative my-8">
             <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-gray-200"></div>
+              <div className="w-full border-t border-dark-200"></div>
             </div>
-            <div className="relative flex justify-center text-sm">
-              <span className="px-4 bg-white text-gray-500">or</span>
+            <div className="relative flex justify-center">
+              <span className="px-4 bg-white text-dark-400 text-sm">or continue with email</span>
             </div>
           </div>
 
-          {/* Magic Link Sign In */}
-          <form onSubmit={handleLogin}>
-            <div className="mb-4">
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
+          {/* Magic Link Form */}
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <label htmlFor="email" className="block text-sm font-medium text-dark-700 mb-2">
                 Email address
               </label>
               <input
@@ -122,40 +138,87 @@ export default function LoginPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
                 required
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-colors"
+                className="input"
               />
             </div>
 
             <button
               type="submit"
               disabled={loading || !email}
-              className="w-full flex items-center justify-center gap-2 bg-primary-600 text-white px-4 py-3 rounded-lg font-medium hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="btn-primary w-full py-4"
             >
               {loading ? (
                 <Loader2 className="w-5 h-5 animate-spin" />
               ) : (
-                <Mail className="w-5 h-5" />
+                <>
+                  <Mail className="w-5 h-5 mr-2" />
+                  Send Magic Link
+                </>
               )}
-              Send Magic Link
             </button>
           </form>
 
+          {/* Message */}
           {message && (
             <div
-              className={`mt-4 p-4 rounded-lg text-sm ${
+              className={`mt-6 p-4 rounded-xl text-sm ${
                 message.type === 'success'
-                  ? 'bg-green-50 text-green-700 border border-green-200'
+                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                   : 'bg-red-50 text-red-700 border border-red-200'
               }`}
             >
               {message.text}
             </div>
           )}
-        </div>
 
-        <p className="text-center text-gray-500 text-sm mt-6">
-          By signing in, you agree to our Terms of Service and Privacy Policy
-        </p>
+          {/* Terms */}
+          <p className="text-center text-dark-400 text-sm mt-8">
+            By signing in, you agree to our{' '}
+            <a href="#" className="text-primary-600 hover:text-primary-700">Terms of Service</a>
+            {' '}and{' '}
+            <a href="#" className="text-primary-600 hover:text-primary-700">Privacy Policy</a>
+          </p>
+        </div>
+      </div>
+
+      {/* Right side - Branding */}
+      <div className="hidden lg:flex flex-1 bg-gradient-to-br from-dark-900 via-dark-900 to-primary-900 relative overflow-hidden">
+        <div className="absolute inset-0 bg-mesh opacity-30" />
+        <div className="absolute inset-0 bg-grid opacity-10" />
+
+        <div className="relative flex flex-col justify-center p-16 text-white">
+          <div className="max-w-md">
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/10 border border-white/20 mb-8">
+              <Sparkles className="w-4 h-4" />
+              <span className="text-sm">Network Intelligence</span>
+            </div>
+
+            <h2 className="text-4xl font-bold mb-6 leading-tight">
+              Unlock the full potential of your network
+            </h2>
+
+            <p className="text-lg text-dark-300 mb-8 leading-relaxed">
+              Discover VCs, angels, and sales prospects hiding in your connections. Get AI-powered categorization and proximity scoring.
+            </p>
+
+            {/* Feature list */}
+            <div className="space-y-4">
+              {[
+                'Connect LinkedIn, Gmail & Calendar',
+                'Auto-categorize contacts with AI',
+                'Team network pooling',
+                'Real-time proximity scoring'
+              ].map((feature, i) => (
+                <div key={i} className="flex items-center gap-3">
+                  <div className="w-5 h-5 rounded-full bg-primary-500/20 flex items-center justify-center">
+                    <div className="w-2 h-2 rounded-full bg-primary-400" />
+                  </div>
+                  <span className="text-dark-200">{feature}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
