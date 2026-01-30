@@ -1,12 +1,11 @@
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
+import { GeistSans } from 'geist/font/sans';
+import { GeistMono } from 'geist/font/mono';
 import './globals.css';
 
-const inter = Inter({ subsets: ['latin'] });
-
 export const metadata: Metadata = {
-  title: 'Relationship Intel - Sales & Fundraising Intelligence',
-  description: 'Connect your network, enrich contacts, and identify VCs, angels, and sales prospects.',
+  title: 'Relationship Intel - Network Intelligence for Sales & Fundraising',
+  description: 'Connect your network, enrich contacts, and identify VCs, angels, and sales prospects with AI.',
 };
 
 export default function RootLayout({
@@ -15,8 +14,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body className={inter.className}>{children}</body>
+    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
+      <body className="font-sans antialiased">{children}</body>
     </html>
   );
 }
