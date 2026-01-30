@@ -75,6 +75,7 @@ export default function ImportPage() {
           linkedin_url: c.linkedin_url,
           current_title: c.current_title,
           current_company: c.current_company,
+          linkedin_connected_on: c.connected_on?.toISOString().split('T')[0] || null,
           source: 'linkedin_csv' as const,
           category: 'uncategorized' as const,
         }));
@@ -198,7 +199,7 @@ export default function ImportPage() {
                     <th className="px-4 py-3 text-left font-medium text-gray-600">Name</th>
                     <th className="px-4 py-3 text-left font-medium text-gray-600">Email</th>
                     <th className="px-4 py-3 text-left font-medium text-gray-600">Company</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-600">Title</th>
+                    <th className="px-4 py-3 text-left font-medium text-gray-600">Connected</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -207,7 +208,7 @@ export default function ImportPage() {
                       <td className="px-4 py-3 text-gray-900">{contact.full_name}</td>
                       <td className="px-4 py-3 text-gray-600">{contact.email || '-'}</td>
                       <td className="px-4 py-3 text-gray-600">{contact.current_company || '-'}</td>
-                      <td className="px-4 py-3 text-gray-600">{contact.current_title || '-'}</td>
+                      <td className="px-4 py-3 text-gray-600">{contact.connected_on ? contact.connected_on.toLocaleDateString() : '-'}</td>
                     </tr>
                   ))}
                 </tbody>
