@@ -54,18 +54,27 @@ export async function POST(request: NextRequest) {
       .select('id, email, full_name, first_name, last_name')
       .eq('owner_id', user.id);
 
-    // Build lookup maps
+    // Build lookup maps with multiple matching strategies
     const contactsByEmail = new Map<string, string>();
-    const contactsByName = new Map<string, string>();
+    const contactsByFullName = new Map<string, string>();
+    const contactsByFirstLast = new Map<string, string>(); // "firstname lastname" normalized
 
     (contacts || []).forEach((c) => {
       if (c.email) {
         contactsByEmail.set(c.email.toLowerCase(), c.id);
       }
       if (c.full_name) {
-        contactsByName.set(c.full_name.toLowerCase(), c.id);
+        contactsByFullName.set(c.full_name.toLowerCase(), c.id);
+      }
+      // Also index by first+last name for flexible matching
+      if (c.first_name && c.last_name) {
+        const key = `${c.first_name} ${c.last_name}`.toLowerCase();
+        contactsByFirstLast.set(key, c.id);
       }
     });
+
+    // Debug: Log what contacts we have
+    console.log(`[Sync] Contact names in DB:`, (contacts || []).map(c => c.full_name).join(', '));
 
     let emailsSynced = 0;
     let meetingsSynced = 0;
@@ -73,7 +82,17 @@ export async function POST(request: NextRequest) {
     let matchedByName = 0;
     let unmatched = 0;
 
-    // Helper to find contact - try email first, then name
+    // Normalize name for matching (remove middle names/initials, extra spaces)
+    const normalizeName = (name: string): string => {
+      // Split into parts
+      const parts = name.toLowerCase().split(/\s+/).filter(p => p.length > 0);
+      if (parts.length === 0) return '';
+      if (parts.length === 1) return parts[0];
+      // Take first and last only (skip middle names/initials)
+      return `${parts[0]} ${parts[parts.length - 1]}`;
+    };
+
+    // Helper to find contact - try email first, then various name strategies
     const findContact = (email: string, name?: string): string | null => {
       // Try email match first
       const byEmail = contactsByEmail.get(email.toLowerCase());
@@ -82,12 +101,23 @@ export async function POST(request: NextRequest) {
         return byEmail;
       }
 
-      // Try name match if we have a name
+      // Try name matches if we have a name
       if (name) {
-        const byName = contactsByName.get(name.toLowerCase());
-        if (byName) {
+        const normalizedName = name.toLowerCase();
+
+        // Try exact full name match
+        const byFullName = contactsByFullName.get(normalizedName);
+        if (byFullName) {
           matchedByName++;
-          return byName;
+          return byFullName;
+        }
+
+        // Try first+last match (handles middle names in Gmail)
+        const simplifiedName = normalizeName(name);
+        const byFirstLast = contactsByFirstLast.get(simplifiedName);
+        if (byFirstLast) {
+          matchedByName++;
+          return byFirstLast;
         }
       }
 
@@ -117,6 +147,13 @@ export async function POST(request: NextRequest) {
     // Debug: Log how many messages we got from Gmail
     console.log(`[Sync] Fetched ${messages.length} Gmail messages, ${events.length} calendar events`);
     console.log(`[Sync] Have ${contacts?.length || 0} contacts to match against`);
+
+    // Debug: Sample some Gmail names/emails we'll try to match
+    const sampleEmails = messages.slice(0, 5).map(m => {
+      const raw = m.direction === 'sent' ? m.to[0] : m.from;
+      return raw;
+    });
+    console.log(`[Sync] Sample Gmail headers:`, sampleEmails);
 
     // Process email interactions in batches (only matched ones for now)
     const emailBatch: Array<{
