@@ -104,54 +104,88 @@ export async function POST(request: NextRequest) {
       return undefined;
     };
 
-    // Process and store ALL email interactions
-    for (const msg of messages) {
-      try {
-        const contactEmail = msg.direction === 'sent' ? msg.to[0] : msg.from;
-        const contactId = findContact(contactEmail);
+    // Process email interactions in batches (only matched ones for now)
+    const emailBatch: Array<{
+      owner_id: string;
+      contact_id: string;
+      gmail_message_id: string;
+      thread_id: string;
+      subject: string;
+      snippet: string;
+      direction: string;
+      email_date: string;
+    }> = [];
 
-        await supabase.from('email_interactions').upsert(
-          {
-            owner_id: user.id,
-            contact_id: contactId, // Can be null - will match later
-            contact_email: contactEmail, // Store for later matching
-            gmail_message_id: msg.id,
-            thread_id: msg.threadId,
-            subject: msg.subject,
-            snippet: msg.snippet,
-            direction: msg.direction,
-            email_date: msg.date.toISOString(),
-          },
-          { onConflict: 'gmail_message_id' }
-        );
-        emailsSynced++;
-      } catch (err) {
-        console.error('Failed to insert email:', err);
+    for (const msg of messages) {
+      const contactEmail = msg.direction === 'sent' ? msg.to[0] : msg.from;
+      const contactId = findContact(contactEmail);
+
+      // Only store if we have a matching contact
+      if (contactId) {
+        emailBatch.push({
+          owner_id: user.id,
+          contact_id: contactId,
+          gmail_message_id: msg.id,
+          thread_id: msg.threadId,
+          subject: msg.subject || '',
+          snippet: msg.snippet || '',
+          direction: msg.direction,
+          email_date: msg.date.toISOString(),
+        });
       }
     }
 
-    // Process and store ALL calendar events
+    // Batch upsert emails
+    if (emailBatch.length > 0) {
+      const { error: emailError } = await supabase
+        .from('email_interactions')
+        .upsert(emailBatch, { onConflict: 'gmail_message_id' });
+
+      if (emailError) {
+        console.error('Email batch insert error:', emailError);
+      } else {
+        emailsSynced = emailBatch.length;
+      }
+    }
+
+    // Process calendar events in batches (only matched ones for now)
+    const calendarBatch: Array<{
+      owner_id: string;
+      contact_id: string;
+      gcal_event_id: string;
+      summary: string;
+      event_start: string;
+      event_end: string | null;
+    }> = [];
+
     for (const event of events) {
       for (const attendeeEmail of event.attendees) {
-        try {
-          const contactId = findContact(attendeeEmail);
+        const contactId = findContact(attendeeEmail);
 
-          await supabase.from('calendar_interactions').upsert(
-            {
-              owner_id: user.id,
-              contact_id: contactId, // Can be null - will match later
-              contact_email: attendeeEmail, // Store for later matching
-              gcal_event_id: `${event.id}_${attendeeEmail}`,
-              summary: event.summary,
-              event_start: event.start.toISOString(),
-              event_end: event.end?.toISOString() || null,
-            },
-            { onConflict: 'gcal_event_id' }
-          );
-          meetingsSynced++;
-        } catch (err) {
-          console.error('Failed to insert calendar event:', err);
+        // Only store if we have a matching contact
+        if (contactId) {
+          calendarBatch.push({
+            owner_id: user.id,
+            contact_id: contactId,
+            gcal_event_id: `${event.id}_${attendeeEmail}`,
+            summary: event.summary || '',
+            event_start: event.start.toISOString(),
+            event_end: event.end?.toISOString() || null,
+          });
         }
+      }
+    }
+
+    // Batch upsert calendar events
+    if (calendarBatch.length > 0) {
+      const { error: calError } = await supabase
+        .from('calendar_interactions')
+        .upsert(calendarBatch, { onConflict: 'gcal_event_id' });
+
+      if (calError) {
+        console.error('Calendar batch insert error:', calError);
+      } else {
+        meetingsSynced = calendarBatch.length;
       }
     }
 
