@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { Contact, Category, WorkHistory } from '@/types/database';
+import { Contact, Category, WorkHistory, HelixProduct } from '@/types/database';
 import {
   Search,
   Filter,
@@ -12,6 +12,10 @@ import {
   Building,
   Briefcase,
   X,
+  Target,
+  Zap,
+  Shield,
+  UserCheck,
 } from 'lucide-react';
 
 const CATEGORIES: { value: Category | 'all'; label: string; color: string }[] = [
@@ -284,7 +288,28 @@ export default function ContactsPage() {
                   </button>
                 ))}
               </div>
+              {/* Category Reason */}
+              {selectedContact.category_reason && (
+                <p className="mt-2 text-xs text-gray-500 italic">
+                  {selectedContact.category_reason}
+                </p>
+              )}
             </div>
+
+            {/* Helix Sales Intel */}
+            {selectedContact.category === 'sales_prospect' && selectedContact.helix_products && selectedContact.helix_products.length > 0 && (
+              <div className="mb-6 p-4 bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl border border-emerald-200">
+                <label className="flex items-center gap-2 text-sm font-medium text-emerald-800 mb-3">
+                  <Target className="w-4 h-4" />
+                  Helix Product Fit
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {selectedContact.helix_products.map((product) => (
+                    <HelixProductBadge key={product} product={product} />
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Proximity Score */}
             <div className="mb-6">
@@ -371,4 +396,37 @@ function ProximityScore({ score }: { score: number }) {
   else if (score > 0) color = 'text-orange-500';
 
   return <span className={`font-semibold ${color}`}>{score}</span>;
+}
+
+function HelixProductBadge({ product }: { product: string }) {
+  const productConfig: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
+    captcha_replacement: {
+      label: 'Captcha Replacement',
+      icon: <Shield className="w-3 h-3" />,
+      color: 'bg-purple-100 text-purple-700 border-purple-200',
+    },
+    voice_captcha: {
+      label: 'Voice Captcha',
+      icon: <UserCheck className="w-3 h-3" />,
+      color: 'bg-blue-100 text-blue-700 border-blue-200',
+    },
+    age_verification: {
+      label: 'Age Verification',
+      icon: <Zap className="w-3 h-3" />,
+      color: 'bg-amber-100 text-amber-700 border-amber-200',
+    },
+  };
+
+  const config = productConfig[product] || {
+    label: product,
+    icon: <Target className="w-3 h-3" />,
+    color: 'bg-gray-100 text-gray-700 border-gray-200',
+  };
+
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium border ${config.color}`}>
+      {config.icon}
+      {config.label}
+    </span>
+  );
 }

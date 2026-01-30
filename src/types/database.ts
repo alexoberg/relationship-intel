@@ -1,5 +1,6 @@
 export type Category = 'vc' | 'angel' | 'sales_prospect' | 'irrelevant' | 'uncategorized';
-export type CategorySource = 'rule' | 'ai' | 'manual';
+export type CategorySource = 'rules' | 'ai' | 'manual' | 'helix';
+export type HelixProduct = 'captcha_replacement' | 'voice_captcha' | 'age_verification';
 export type ContactSource = 'linkedin_csv' | 'gmail' | 'gcal' | 'manual';
 export type EmailDirection = 'sent' | 'received';
 export type FirmType = 'vc' | 'angel_network' | 'pe' | 'accelerator';
@@ -28,9 +29,12 @@ export interface Contact {
   current_title: string | null;
   current_company: string | null;
   current_company_industry: string | null;
+  company_domain: string | null;
   category: Category;
   category_confidence: number;
   category_source: CategorySource;
+  category_reason: string | null;
+  helix_products: HelixProduct[] | null;
   proximity_score: number;
   last_interaction_at: string | null;
   interaction_count: number;
