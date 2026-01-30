@@ -1,36 +1,72 @@
 import { Category, Contact, WorkHistory, KnownFirm } from '@/types/database';
 
-// Title patterns for categorization
-const VC_TITLE_PATTERNS = [
-  /\b(partner|principal|associate|analyst|venture|vc|gp|general partner|managing director|investment)\b/i,
-];
+// ============================================
+// CATEGORIZATION RULES (Alex's definitions)
+// ============================================
+//
+// VC: Works or has EVER worked at a VC fund
+// Angel: Has "investor" or "board member" in profile but NEVER worked at VC
+//        OR is C-suite/founder of a successful startup
+// Sales: Custom logic based on Helix product fit (PerimeterX, Fastly, etc.)
+// ============================================
 
+// Angel indicators - title patterns that suggest angel investor
 const ANGEL_TITLE_PATTERNS = [
-  /\b(angel|investor|advisor|board member|mentor|entrepreneur in residence|eir)\b/i,
+  /\binvestor\b/i,
+  /\bboard\s*(member|director|seat)\b/i,
+  /\badvisor\b/i,
+  /\bangel\b/i,
+  /\bmentor\b/i,
+  /\bentrepreneur\s*in\s*residence\b/i,
+  /\beir\b/i,
 ];
 
-const SALES_TITLE_PATTERNS = [
-  /\b(ceo|cto|cfo|coo|founder|co-founder|vp|vice president|director|head of|manager|lead|senior|chief)\b/i,
+// C-Suite/Founder patterns (potential angels if at successful startups)
+const EXECUTIVE_PATTERNS = [
+  /\b(ceo|chief\s*executive)\b/i,
+  /\b(cto|chief\s*technology)\b/i,
+  /\b(cfo|chief\s*financial)\b/i,
+  /\b(coo|chief\s*operating)\b/i,
+  /\b(cmo|chief\s*marketing)\b/i,
+  /\b(cpo|chief\s*product)\b/i,
+  /\b(founder|co-founder|cofounder)\b/i,
 ];
 
-// Industry patterns
+// VC firm indicators - industries that suggest VC employment
 const VC_INDUSTRIES = [
   'venture capital',
   'private equity',
   'investment management',
-  'financial services',
-  'capital markets',
+  'venture capital & private equity',
+  'investment banking',
 ];
 
-const SALES_INDUSTRIES = [
+// VC title patterns (for people AT vc firms)
+const VC_TITLE_PATTERNS = [
+  /\b(partner|principal|associate|analyst|venture|vc|gp|general\s*partner|managing\s*director|investment\s*professional)\b/i,
+];
+
+// Sales prospect title patterns (for Helix products)
+const SALES_TITLE_PATTERNS = [
+  /\b(ciso|chief\s*information\s*security)\b/i,          // Captcha replacement
+  /\b(general\s*counsel|gc|chief\s*legal)\b/i,           // Voice captcha / Age verification
+  /\b(trust\s*(and|&)?\s*safety)\b/i,                    // Voice captcha / Age verification
+  /\b(vp|vice\s*president).*(security|engineering|product)\b/i,
+  /\b(head\s*of).*(security|fraud|trust|safety)\b/i,
+];
+
+// Industries that suggest tech startup success (for angel classification)
+const SUCCESSFUL_STARTUP_INDUSTRIES = [
   'software',
   'saas',
   'technology',
-  'enterprise',
-  'b2b',
   'fintech',
-  'healthcare',
-  'e-commerce',
+  'internet',
+  'information technology',
+  'computer software',
+  'artificial intelligence',
+  'blockchain',
+  'crypto',
 ];
 
 export interface CategorizationResult {
@@ -39,114 +75,162 @@ export interface CategorizationResult {
   reason: string;
 }
 
+// Helper: Check if person has EVER worked at a VC firm
+function hasVCExperience(
+  workHistory: WorkHistory[],
+  knownFirms: KnownFirm[],
+  currentCompany?: string,
+  currentIndustry?: string
+): { hasVC: boolean; vcFirm?: string } {
+  // Check current company first
+  if (currentIndustry) {
+    const industryLower = currentIndustry.toLowerCase();
+    if (VC_INDUSTRIES.some(ind => industryLower.includes(ind))) {
+      return { hasVC: true, vcFirm: currentCompany };
+    }
+  }
+
+  // Check against known VC firms (current company)
+  if (currentCompany) {
+    const companyLower = currentCompany.toLowerCase();
+    const matchedFirm = knownFirms.find(firm => {
+      if (firm.type !== 'vc' && firm.type !== 'pe') return false;
+      const firmNameLower = firm.name.toLowerCase();
+      const aliases = firm.aliases?.map(a => a.toLowerCase()) || [];
+      return companyLower.includes(firmNameLower) || aliases.some(a => companyLower.includes(a));
+    });
+    if (matchedFirm) return { hasVC: true, vcFirm: matchedFirm.name };
+  }
+
+  // Check work history for any VC experience
+  for (const job of workHistory) {
+    const jobCompany = job.company_name?.toLowerCase() || '';
+    const jobIndustry = job.company_industry?.toLowerCase() || '';
+
+    // Check industry
+    if (VC_INDUSTRIES.some(ind => jobIndustry.includes(ind))) {
+      return { hasVC: true, vcFirm: job.company_name };
+    }
+
+    // Check against known VC firms
+    const matchedFirm = knownFirms.find(firm => {
+      if (firm.type !== 'vc' && firm.type !== 'pe') return false;
+      const firmNameLower = firm.name.toLowerCase();
+      const aliases = firm.aliases?.map(a => a.toLowerCase()) || [];
+      return jobCompany.includes(firmNameLower) || aliases.some(a => jobCompany.includes(a));
+    });
+    if (matchedFirm) return { hasVC: true, vcFirm: matchedFirm.name };
+  }
+
+  return { hasVC: false };
+}
+
+// Helper: Check if title indicates investor/board member
+function hasInvestorOrBoardTitle(title: string): boolean {
+  return ANGEL_TITLE_PATTERNS.some(pattern => pattern.test(title));
+}
+
+// Helper: Check if person is C-suite/founder at a successful startup
+function isSuccessfulStartupExec(
+  title: string,
+  company: string,
+  industry: string,
+  // Could add funding data, employee count, etc. for "successful" determination
+): boolean {
+  const isExecutive = EXECUTIVE_PATTERNS.some(pattern => pattern.test(title));
+  if (!isExecutive) return false;
+
+  // Check if company is in tech/startup industries
+  const industryLower = industry.toLowerCase();
+  const companyLower = company.toLowerCase();
+  const isTechStartup = SUCCESSFUL_STARTUP_INDUSTRIES.some(ind =>
+    industryLower.includes(ind) || companyLower.includes(ind)
+  );
+
+  return isTechStartup;
+}
+
 export function categorizeByRules(
   contact: Partial<Contact>,
   workHistory: WorkHistory[],
   knownFirms: KnownFirm[]
 ): CategorizationResult {
-  const title = contact.current_title?.toLowerCase() || '';
-  const company = contact.current_company?.toLowerCase() || '';
-  const industry = contact.current_company_industry?.toLowerCase() || '';
+  const title = contact.current_title || '';
+  const company = contact.current_company || '';
+  const industry = contact.current_company_industry || '';
 
-  // Check against known VC/Angel firms first (highest confidence)
-  const matchedFirm = knownFirms.find(firm => {
-    const firmNameLower = firm.name.toLowerCase();
-    const aliases = firm.aliases?.map(a => a.toLowerCase()) || [];
-    return (
-      company.includes(firmNameLower) ||
-      aliases.some(alias => company.includes(alias))
-    );
-  });
+  // ============================================
+  // STEP 1: Check for VC (current or past VC experience)
+  // ============================================
+  const vcCheck = hasVCExperience(workHistory, knownFirms, company, industry);
 
-  if (matchedFirm) {
-    if (matchedFirm.type === 'vc' || matchedFirm.type === 'pe') {
+  if (vcCheck.hasVC) {
+    // Currently works at VC
+    const currentlyAtVC = VC_INDUSTRIES.some(ind =>
+      industry.toLowerCase().includes(ind)
+    ) || knownFirms.some(firm => {
+      if (firm.type !== 'vc' && firm.type !== 'pe') return false;
+      return company.toLowerCase().includes(firm.name.toLowerCase());
+    });
+
+    if (currentlyAtVC) {
       return {
         category: 'vc',
         confidence: 0.95,
-        reason: `Works at known VC firm: ${matchedFirm.name}`,
+        reason: `Currently works at VC firm: ${company}`,
       };
-    }
-    if (matchedFirm.type === 'angel_network' || matchedFirm.type === 'accelerator') {
-      return {
-        category: 'angel',
-        confidence: 0.9,
-        reason: `Works at accelerator/angel network: ${matchedFirm.name}`,
-      };
-    }
-  }
-
-  // Check work history for VC experience
-  const hasVCHistory = workHistory.some(job => {
-    const jobCompanyLower = job.company_name?.toLowerCase() || '';
-    const jobIndustryLower = job.company_industry?.toLowerCase() || '';
-    return (
-      VC_INDUSTRIES.some(ind => jobIndustryLower.includes(ind)) ||
-      knownFirms.some(firm => {
-        const firmNameLower = firm.name.toLowerCase();
-        return (
-          (firm.type === 'vc' || firm.type === 'pe') &&
-          jobCompanyLower.includes(firmNameLower)
-        );
-      })
-    );
-  });
-
-  // Check title patterns with industry context
-  if (VC_TITLE_PATTERNS.some(pattern => pattern.test(title))) {
-    if (VC_INDUSTRIES.some(ind => industry.includes(ind)) || hasVCHistory) {
+    } else {
       return {
         category: 'vc',
         confidence: 0.85,
-        reason: `Title "${contact.current_title}" at "${contact.current_company}" matches VC pattern`,
+        reason: `Previously worked at VC firm: ${vcCheck.vcFirm}`,
       };
     }
   }
 
-  // Check for angel investor indicators
-  if (ANGEL_TITLE_PATTERNS.some(pattern => pattern.test(title))) {
-    // If they have "investor" in title but not at a VC firm
-    if (title.includes('angel') || (title.includes('investor') && !hasVCHistory)) {
-      return {
-        category: 'angel',
-        confidence: 0.8,
-        reason: `Title "${contact.current_title}" indicates angel investor`,
-      };
-    }
+  // ============================================
+  // STEP 2: Check for Angel Investor
+  // Has "investor" or "board member" in title, but NO VC history
+  // ============================================
+  if (hasInvestorOrBoardTitle(title)) {
+    return {
+      category: 'angel',
+      confidence: 0.9,
+      reason: `Has investor/board member title ("${title}") with no VC firm history`,
+    };
   }
 
-  // Check for founder/exec at tech company (potential angel)
-  if (/\b(founder|co-founder|ceo)\b/i.test(title)) {
-    const isTechCompany = SALES_INDUSTRIES.some(ind =>
-      industry.includes(ind) || company.includes(ind)
-    );
-    if (isTechCompany) {
-      return {
-        category: 'angel',
-        confidence: 0.6,
-        reason: `Founder/CEO at tech company - potential angel investor`,
-      };
-    }
+  // ============================================
+  // STEP 3: Check for C-suite/Founder at successful startup (Angel)
+  // ============================================
+  if (isSuccessfulStartupExec(title, company, industry)) {
+    return {
+      category: 'angel',
+      confidence: 0.7,
+      reason: `C-suite/Founder at tech company (${title} at ${company}) - likely angel investor`,
+    };
   }
 
-  // Sales prospect: exec/manager at a company in target industries
+  // ============================================
+  // STEP 4: Check for Sales Prospect (Helix products)
+  // CISO → Captcha replacement
+  // GC/Trust & Safety → Voice captcha / Age verification
+  // ============================================
   if (SALES_TITLE_PATTERNS.some(pattern => pattern.test(title))) {
-    const isSalesTarget = SALES_INDUSTRIES.some(ind =>
-      industry.includes(ind) || company.includes(ind)
-    );
-    if (isSalesTarget) {
-      return {
-        category: 'sales_prospect',
-        confidence: 0.7,
-        reason: `${contact.current_title} at ${contact.current_company} - potential sales prospect`,
-      };
-    }
+    return {
+      category: 'sales_prospect',
+      confidence: 0.8,
+      reason: `Title "${title}" matches Helix target persona at ${company}`,
+    };
   }
 
-  // Default: uncategorized if no clear signal
+  // ============================================
+  // Default: uncategorized - needs AI prediction or more data
+  // ============================================
   return {
     category: 'uncategorized',
     confidence: 0,
-    reason: 'No clear categorization signal from rules',
+    reason: 'No clear categorization signal - recommend AI prediction or PDL enrichment',
   };
 }
 
@@ -171,11 +255,30 @@ Industry: ${contact.current_company_industry || 'Unknown'}
 WORK HISTORY:
 ${workHistoryText || 'No work history available'}
 
-CATEGORIES:
-1. VC - Works at a venture capital firm, PE firm, or makes institutional investments
-2. Angel - Individual investor, advisor, successful entrepreneur who invests personally
-3. Sales Prospect - Decision maker at a company that could be a customer (exec, director, manager at tech/SaaS company)
-4. Irrelevant - Not relevant for sales or fundraising (individual contributor, unrelated industry, student, etc.)
+CATEGORY DEFINITIONS (IMPORTANT - follow these exactly):
+
+1. VC - Person works OR has EVER worked at a venture capital or private equity firm.
+   Look for: Sequoia, a16z, Accel, Greylock, Benchmark, Index, General Catalyst, Lightspeed, NEA,
+   Bessemer, Founders Fund, Kleiner Perkins, GGV, Insight, Tiger Global, etc.
+   Also includes investment banking with VC focus.
+
+2. Angel - Person has "investor" or "board member" in their title but has NEVER worked at a VC firm.
+   OR they are a C-suite executive (CEO, CTO, CFO) or founder of a successful tech startup.
+   Key: If they have VC history, they're VC not Angel.
+
+3. Sales Prospect - Relevant decision maker for enterprise security/trust products:
+   - CISO or security leaders (for captcha/bot protection)
+   - General Counsel or legal leaders (for voice verification)
+   - Trust & Safety or fraud prevention leaders
+   - VP/Director of Product, Engineering, or Security
+
+4. Irrelevant - Individual contributors, students, unrelated industries (non-tech),
+   or roles without decision-making power for security/verification products.
+
+CRITICAL RULES:
+- VC history (even past) → classify as VC
+- "Investor" or "board member" WITHOUT VC history → classify as Angel
+- Founder/CEO of tech startup → classify as Angel
 
 Respond with a JSON object:
 {
