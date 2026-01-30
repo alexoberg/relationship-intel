@@ -33,12 +33,12 @@ export async function POST(request: NextRequest) {
     }
 
     // Fetch Gmail messages and Calendar events independently
-    // Increased limit to 2000 messages for better coverage
+    // Pro plan allows 60s timeout - fetch up to 10,000 messages
     const [messages, events] = await Promise.all([
       fetchGmailMessages(
         profile.google_access_token,
         profile.google_refresh_token || undefined,
-        2000
+        10000
       ),
       fetchCalendarEvents(
         profile.google_access_token,
