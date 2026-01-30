@@ -66,25 +66,40 @@ export async function fetchGmailMessages(
   const gmail = google.gmail({ version: 'v1', auth });
 
   const messages: GmailMessage[] = [];
+  const messageIds: string[] = [];
   let pageToken: string | undefined;
 
   try {
+    // First, collect all message IDs (fast)
+    console.log(`[Gmail] Fetching message IDs (max ${maxResults})...`);
     do {
       const response = await gmail.users.messages.list({
         userId: 'me',
-        maxResults: Math.min(100, maxResults - messages.length),
+        maxResults: Math.min(500, maxResults - messageIds.length),
         pageToken,
       });
 
-      const messageIds = response.data.messages || [];
+      const ids = response.data.messages || [];
+      for (const msg of ids) {
+        if (messageIds.length >= maxResults) break;
+        if (msg.id) messageIds.push(msg.id);
+      }
 
-      for (const msg of messageIds) {
-        if (messages.length >= maxResults) break;
+      pageToken = response.data.nextPageToken || undefined;
+    } while (pageToken && messageIds.length < maxResults);
 
-        try {
+    console.log(`[Gmail] Found ${messageIds.length} message IDs, fetching details in parallel...`);
+
+    // Fetch message details in parallel batches (much faster)
+    const batchSize = 50; // Fetch 50 at a time in parallel
+    for (let i = 0; i < messageIds.length; i += batchSize) {
+      const batch = messageIds.slice(i, i + batchSize);
+
+      const batchResults = await Promise.allSettled(
+        batch.map(async (msgId) => {
           const detail = await gmail.users.messages.get({
             userId: 'me',
-            id: msg.id!,
+            id: msgId,
             format: 'metadata',
             metadataHeaders: ['From', 'To', 'Subject', 'Date'],
           });
@@ -102,23 +117,31 @@ export async function fetchGmailMessages(
           const labels = detail.data.labelIds || [];
           const direction = labels.includes('SENT') ? 'sent' : 'received';
 
-          messages.push({
-            id: msg.id!,
-            threadId: msg.threadId!,
+          return {
+            id: msgId,
+            threadId: detail.data.threadId!,
             subject,
             snippet: detail.data.snippet || '',
             from: extractEmail(from),
             to: to.split(',').map((e) => extractEmail(e.trim())),
             date: new Date(dateStr),
             direction,
-          });
-        } catch (err) {
-          console.error(`Failed to fetch message ${msg.id}:`, err);
+          } as GmailMessage;
+        })
+      );
+
+      // Collect successful results
+      for (const result of batchResults) {
+        if (result.status === 'fulfilled') {
+          messages.push(result.value);
         }
       }
 
-      pageToken = response.data.nextPageToken || undefined;
-    } while (pageToken && messages.length < maxResults);
+      // Log progress
+      if ((i + batchSize) % 200 === 0 || i + batchSize >= messageIds.length) {
+        console.log(`[Gmail] Processed ${Math.min(i + batchSize, messageIds.length)}/${messageIds.length} messages`);
+      }
+    }
 
     return messages;
   } catch (error) {

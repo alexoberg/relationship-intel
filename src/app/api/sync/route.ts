@@ -33,16 +33,17 @@ export async function POST(request: NextRequest) {
     }
 
     // Fetch Gmail messages and Calendar events independently
+    // Increased limit to 2000 messages for better coverage
     const [messages, events] = await Promise.all([
       fetchGmailMessages(
         profile.google_access_token,
         profile.google_refresh_token || undefined,
-        500
+        2000
       ),
       fetchCalendarEvents(
         profile.google_access_token,
         profile.google_refresh_token || undefined,
-        365
+        730 // 2 years of calendar events
       ),
     ]);
 
