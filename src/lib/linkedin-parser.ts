@@ -1,10 +1,12 @@
 /**
- * LinkedIn CSV Parser v2.1 - Build 20260129
- * Handles notes/metadata rows at the top of LinkedIn export files
- * Silently skips empty/metadata rows without generating warnings
+ * LinkedIn CSV Parser v3.0
+ * Completely rewritten to fix caching issues
  */
 import Papa from 'papaparse';
 import { LinkedInConnection } from '@/types/database';
+
+// Version identifier for debugging
+export const PARSER_VERSION = 'v3.0-20260129-fix';
 
 export interface ParsedContact {
   first_name: string;
@@ -25,97 +27,97 @@ export interface ParseResult {
   validRows: number;
 }
 
-export function parseLinkedInCSV(csvContent: string): Promise<ParseResult> {
-  return new Promise((resolve) => {
-    const errors: string[] = [];
-    const contacts: ParsedContact[] = [];
-
-    // LinkedIn CSVs have notes/metadata at the top before the actual header
-    // Format: "Notes:", then explanatory text, then blank line, then header row
-    const lines = csvContent.split('\n');
-    let dataStartIndex = 0;
-
-    // Look for the header row - it starts with "First Name" (case insensitive)
-    for (let i = 0; i < Math.min(15, lines.length); i++) {
-      const line = lines[i].trim();
-      // Header row starts with "First Name"
-      if (line.toLowerCase().startsWith('first name') ||
-          line.toLowerCase().startsWith('"first name')) {
-        dataStartIndex = i;
-        break;
-      }
+// Find the header row index in LinkedIn CSV (skips notes at top)
+function findHeaderRowIndex(lines: string[]): number {
+  const maxLinesToCheck = Math.min(15, lines.length);
+  for (let idx = 0; idx < maxLinesToCheck; idx++) {
+    const currentLine = lines[idx].trim().toLowerCase();
+    if (currentLine.startsWith('first name') || currentLine.startsWith('"first name')) {
+      return idx;
     }
+  }
+  return 0;
+}
 
-    // Reconstruct CSV from the data start
-    const cleanedCSV = lines.slice(dataStartIndex).join('\n');
+// Extract contact from a parsed CSV row
+function extractContactFromRow(row: LinkedInConnection): ParsedContact | null {
+  const firstName = String(row['First Name'] || row['FirstName'] || row['first_name'] || '').trim();
+  const lastName = String(row['Last Name'] || row['LastName'] || row['last_name'] || '').trim();
 
-    Papa.parse<LinkedInConnection>(cleanedCSV, {
+  // SILENTLY skip rows without names - no error, no warning
+  if (!firstName && !lastName) {
+    return null;
+  }
+
+  // SILENTLY skip metadata rows
+  if (firstName.includes(':') || firstName.length > 50) {
+    return null;
+  }
+
+  const email = row['Email Address'] || row['Email'] || row['email'] || null;
+  const company = row['Company'] || row['company'] || null;
+  const position = row['Position'] || row['Title'] || row['position'] || null;
+  const connectedOn = row['Connected On'] || row['ConnectedOn'] || null;
+  const profileUrl = row['URL'] || row['Profile URL'] || row['LinkedIn URL'] || null;
+
+  return {
+    first_name: firstName,
+    last_name: lastName,
+    full_name: [firstName, lastName].filter(Boolean).join(' ').trim(),
+    email: email ? String(email).trim() : null,
+    current_company: company ? String(company).trim() : null,
+    current_title: position ? String(position).trim() : null,
+    connected_on: connectedOn ? parseLinkedInDate(String(connectedOn)) : null,
+    linkedin_url: profileUrl ? String(profileUrl).trim() : null,
+  };
+}
+
+export function parseLinkedInCSV(csvContent: string): Promise<ParseResult> {
+  // Log version for debugging
+  console.log('[LinkedIn Parser]', PARSER_VERSION);
+
+  return new Promise((resolve) => {
+    const parseErrors: string[] = [];
+    const validContacts: ParsedContact[] = [];
+
+    // Split and find where real data starts
+    const allLines = csvContent.split('\n');
+    const headerIndex = findHeaderRowIndex(allLines);
+    const csvWithoutNotes = allLines.slice(headerIndex).join('\n');
+
+    Papa.parse<LinkedInConnection>(csvWithoutNotes, {
       header: true,
-      skipEmptyLines: 'greedy', // Skip empty and whitespace-only lines
-      transformHeader: (header) => header.trim(),
-      complete: (results) => {
-        const totalRows = results.data.length;
-        let skippedRows = 0;
+      skipEmptyLines: 'greedy',
+      transformHeader: (h) => h.trim(),
+      complete: (parseResult) => {
+        let skipped = 0;
 
-        results.data.forEach((row, index) => {
-          try {
-            // LinkedIn CSVs can have different column names
-            const firstName = (row['First Name'] || row['FirstName'] || row['first_name'] || '').toString().trim();
-            const lastName = (row['Last Name'] || row['LastName'] || row['last_name'] || '').toString().trim();
-            const email = row['Email Address'] || row['Email'] || row['email'] || null;
-            const company = row['Company'] || row['company'] || null;
-            const position = row['Position'] || row['Title'] || row['position'] || null;
-            const connectedOn = row['Connected On'] || row['ConnectedOn'] || null;
-            const profileUrl = row['URL'] || row['Profile URL'] || row['LinkedIn URL'] || null;
-
-            // Skip if no name (silently - these are likely empty/metadata rows)
-            if (!firstName && !lastName) {
-              skippedRows++;
-              return;
-            }
-
-            // Skip rows that look like metadata (e.g., notes, timestamps)
-            if (firstName.includes(':') || firstName.length > 50) {
-              skippedRows++;
-              return;
-            }
-
-            const fullName = [firstName, lastName].filter(Boolean).join(' ').trim();
-
-            contacts.push({
-              first_name: firstName,
-              last_name: lastName,
-              full_name: fullName,
-              email: email?.toString().trim() || null,
-              current_company: company?.toString().trim() || null,
-              current_title: position?.toString().trim() || null,
-              connected_on: connectedOn ? parseLinkedInDate(connectedOn.toString()) : null,
-              linkedin_url: profileUrl?.toString().trim() || null,
-            });
-          } catch (err) {
-            errors.push(`Row ${index + 1}: ${err instanceof Error ? err.message : 'Parse error'}`);
+        parseResult.data.forEach((csvRow) => {
+          const contact = extractContactFromRow(csvRow);
+          if (contact) {
+            validContacts.push(contact);
+          } else {
+            skipped++;
           }
         });
 
-        // Only report skipped rows if there were many (likely a format issue)
-        if (skippedRows > 0 && contacts.length > 0) {
-          // Don't report as error - just info
-          console.log(`Skipped ${skippedRows} empty or metadata rows`);
+        if (skipped > 0) {
+          console.log(`[LinkedIn Parser] Silently skipped ${skipped} empty/metadata rows`);
         }
 
         resolve({
-          success: contacts.length > 0,
-          contacts,
-          errors,
-          totalRows,
-          validRows: contacts.length,
+          success: validContacts.length > 0,
+          contacts: validContacts,
+          errors: parseErrors,
+          totalRows: parseResult.data.length,
+          validRows: validContacts.length,
         });
       },
-      error: (error: Error) => {
+      error: (err: Error) => {
         resolve({
           success: false,
           contacts: [],
-          errors: [error.message],
+          errors: [err.message],
           totalRows: 0,
           validRows: 0,
         });
