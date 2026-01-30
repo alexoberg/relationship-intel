@@ -104,6 +104,20 @@ export async function POST(request: NextRequest) {
       return undefined;
     };
 
+    // Extract just the email address from "Name <email>" format
+    const extractEmailFromHeader = (header: string): string => {
+      const match = header.match(/<([^>]+)>/);
+      if (match) {
+        return match[1].trim();
+      }
+      // If no angle brackets, assume it's just an email
+      return header.trim();
+    };
+
+    // Debug: Log how many messages we got from Gmail
+    console.log(`[Sync] Fetched ${messages.length} Gmail messages, ${events.length} calendar events`);
+    console.log(`[Sync] Have ${contacts?.length || 0} contacts to match against`);
+
     // Process email interactions in batches (only matched ones for now)
     const emailBatch: Array<{
       owner_id: string;
@@ -117,8 +131,10 @@ export async function POST(request: NextRequest) {
     }> = [];
 
     for (const msg of messages) {
-      const contactEmail = msg.direction === 'sent' ? msg.to[0] : msg.from;
-      const contactId = findContact(contactEmail);
+      const rawHeader = msg.direction === 'sent' ? msg.to[0] : msg.from;
+      const contactEmail = extractEmailFromHeader(rawHeader);
+      const contactName = extractNameFromHeader(rawHeader);
+      const contactId = findContact(contactEmail, contactName);
 
       // Only store if we have a matching contact
       if (contactId) {
@@ -159,8 +175,10 @@ export async function POST(request: NextRequest) {
     }> = [];
 
     for (const event of events) {
-      for (const attendeeEmail of event.attendees) {
-        const contactId = findContact(attendeeEmail);
+      for (const attendeeRaw of event.attendees) {
+        const attendeeEmail = extractEmailFromHeader(attendeeRaw);
+        const attendeeName = extractNameFromHeader(attendeeRaw);
+        const contactId = findContact(attendeeEmail, attendeeName);
 
         // Only store if we have a matching contact
         if (contactId) {
@@ -175,6 +193,9 @@ export async function POST(request: NextRequest) {
         }
       }
     }
+
+    // Debug: Log matching results
+    console.log(`[Sync] Email matching: ${matchedByEmail} by email, ${matchedByName} by name, ${unmatched} unmatched`);
 
     // Batch upsert calendar events
     if (calendarBatch.length > 0) {
@@ -198,6 +219,11 @@ export async function POST(request: NextRequest) {
       emailsSynced,
       meetingsSynced,
       contactsUpdated,
+      debug: {
+        gmailMessagesFetched: messages.length,
+        calendarEventsFetched: events.length,
+        contactsInDb: contacts?.length || 0,
+      },
       matching: {
         byEmail: matchedByEmail,
         byName: matchedByName,
