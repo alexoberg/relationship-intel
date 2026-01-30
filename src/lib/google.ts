@@ -60,7 +60,8 @@ export interface GmailMessage {
 export async function fetchGmailMessages(
   accessToken: string,
   refreshToken: string | undefined,
-  maxResults: number = 500
+  maxResults: number = 500,
+  sinceDate?: Date // Optional: only fetch emails after this date
 ): Promise<GmailMessage[]> {
   const auth = createGoogleClient(accessToken, refreshToken);
   const gmail = google.gmail({ version: 'v1', auth });
@@ -69,14 +70,24 @@ export async function fetchGmailMessages(
   const messageIds: string[] = [];
   let pageToken: string | undefined;
 
+  // Build query for incremental sync
+  let query: string | undefined;
+  if (sinceDate) {
+    // Gmail uses epoch seconds for after: query
+    const epochSeconds = Math.floor(sinceDate.getTime() / 1000);
+    query = `after:${epochSeconds}`;
+    console.log(`[Gmail] Incremental sync: fetching emails after ${sinceDate.toISOString()}`);
+  }
+
   try {
     // First, collect all message IDs (fast)
-    console.log(`[Gmail] Fetching message IDs (max ${maxResults})...`);
+    console.log(`[Gmail] Fetching message IDs (max ${maxResults})${query ? ' with filter' : ''}...`);
     do {
       const response = await gmail.users.messages.list({
         userId: 'me',
         maxResults: Math.min(500, maxResults - messageIds.length),
         pageToken,
+        q: query, // Apply date filter if provided
       });
 
       const ids = response.data.messages || [];
@@ -161,7 +172,8 @@ export interface CalendarEvent {
 export async function fetchCalendarEvents(
   accessToken: string,
   refreshToken: string | undefined,
-  daysBack: number = 365
+  daysBack: number = 365,
+  sinceDate?: Date // Optional: only fetch events after this date (for incremental sync)
 ): Promise<CalendarEvent[]> {
   const auth = createGoogleClient(accessToken, refreshToken);
   const calendar = google.calendar({ version: 'v3', auth });
@@ -169,8 +181,16 @@ export async function fetchCalendarEvents(
   const events: CalendarEvent[] = [];
 
   try {
-    const timeMin = new Date();
-    timeMin.setDate(timeMin.getDate() - daysBack);
+    // Use sinceDate for incremental sync, otherwise go back daysBack days
+    let timeMin: Date;
+    if (sinceDate) {
+      timeMin = sinceDate;
+      console.log(`[Calendar] Incremental sync: fetching events after ${sinceDate.toISOString()}`);
+    } else {
+      timeMin = new Date();
+      timeMin.setDate(timeMin.getDate() - daysBack);
+      console.log(`[Calendar] Full sync: fetching events from last ${daysBack} days`);
+    }
 
     let pageToken: string | undefined;
 

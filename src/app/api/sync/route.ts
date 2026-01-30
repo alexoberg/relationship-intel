@@ -32,18 +32,29 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Check for incremental sync - use last sync timestamps if available
+    const lastGmailSync = profile.last_gmail_sync_at ? new Date(profile.last_gmail_sync_at) : undefined;
+    const lastCalendarSync = profile.last_calendar_sync_at ? new Date(profile.last_calendar_sync_at) : undefined;
+    const syncStartTime = new Date(); // Record when sync started
+
+    const isFirstSync = !lastGmailSync;
+    console.log(`[Sync] ${isFirstSync ? 'First sync - fetching all data' : `Incremental sync since ${lastGmailSync?.toISOString()}`}`);
+
     // Fetch Gmail messages and Calendar events independently
-    // Pro plan allows 60s timeout - fetch up to 10,000 messages
+    // First sync: fetch up to 10,000 messages, 5 years of calendar
+    // Incremental sync: fetch only new data since last sync
     const [messages, events] = await Promise.all([
       fetchGmailMessages(
         profile.google_access_token,
         profile.google_refresh_token || undefined,
-        10000
+        isFirstSync ? 10000 : 5000, // Smaller limit for incremental
+        lastGmailSync // Pass last sync date for incremental
       ),
       fetchCalendarEvents(
         profile.google_access_token,
         profile.google_refresh_token || undefined,
-        1825 // 5 years of calendar events
+        1825, // 5 years for first sync
+        lastCalendarSync // Pass last sync date for incremental
       ),
     ]);
 
@@ -282,11 +293,23 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Update last sync timestamps for incremental sync next time
+    await supabase
+      .from('profiles')
+      .update({
+        last_gmail_sync_at: syncStartTime.toISOString(),
+        last_calendar_sync_at: syncStartTime.toISOString(),
+      })
+      .eq('id', user.id);
+
+    console.log(`[Sync] Updated last sync timestamp to ${syncStartTime.toISOString()}`);
+
     return NextResponse.json({
       success: true,
       contactsCreated,
       emailsSynced,
       meetingsSynced,
+      syncType: isFirstSync ? 'full' : 'incremental',
       debug: {
         gmailMessagesFetched: messages.length,
         calendarEventsFetched: events.length,
