@@ -118,7 +118,7 @@ export async function POST(request: NextRequest) {
         if (categorization.category !== 'uncategorized') {
           updateData.category = categorization.category;
           updateData.category_confidence = categorization.confidence;
-          updateData.category_source = 'rule';
+          updateData.category_source = 'rules';
           categorizedCount++;
         }
 

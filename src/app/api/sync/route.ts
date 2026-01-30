@@ -3,7 +3,8 @@ import { createClient } from '@/lib/supabase/server';
 import {
   fetchGmailMessages,
   fetchCalendarEvents,
-  groupInteractionsByEmail,
+  GmailMessage,
+  CalendarEvent,
 } from '@/lib/google';
 
 export async function POST(request: NextRequest) {
@@ -33,7 +34,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Fetch Gmail messages and Calendar events
+    // Fetch Gmail messages and Calendar events independently
     const [messages, events] = await Promise.all([
       fetchGmailMessages(
         profile.google_access_token,
@@ -47,60 +48,100 @@ export async function POST(request: NextRequest) {
       ),
     ]);
 
-    // Group by email
-    const interactions = groupInteractionsByEmail(messages, events);
-
-    // Get all contacts for this user
+    // Get all contacts for matching (by email AND by name)
     const { data: contacts } = await supabase
       .from('contacts')
-      .select('id, email')
-      .eq('owner_id', user.id)
-      .not('email', 'is', null);
+      .select('id, email, full_name, first_name, last_name')
+      .eq('owner_id', user.id);
 
-    const contactsByEmail = new Map(
-      (contacts || []).map((c) => [c.email?.toLowerCase(), c.id])
-    );
+    // Build lookup maps
+    const contactsByEmail = new Map<string, string>();
+    const contactsByName = new Map<string, string>();
+
+    (contacts || []).forEach((c) => {
+      if (c.email) {
+        contactsByEmail.set(c.email.toLowerCase(), c.id);
+      }
+      if (c.full_name) {
+        contactsByName.set(c.full_name.toLowerCase(), c.id);
+      }
+    });
 
     let emailsSynced = 0;
     let meetingsSynced = 0;
-    let contactsUpdated = 0;
+    let matchedByEmail = 0;
+    let matchedByName = 0;
+    let unmatched = 0;
 
-    // Process interactions
-    for (const [email, data] of interactions) {
-      const contactId = contactsByEmail.get(email.toLowerCase());
+    // Helper to find contact - try email first, then name
+    const findContact = (email: string, name?: string): string | null => {
+      // Try email match first
+      const byEmail = contactsByEmail.get(email.toLowerCase());
+      if (byEmail) {
+        matchedByEmail++;
+        return byEmail;
+      }
 
-      if (!contactId) continue;
-
-      // Insert email interactions
-      for (const msg of data.emails) {
-        try {
-          await supabase.from('email_interactions').upsert(
-            {
-              owner_id: user.id,
-              contact_id: contactId,
-              gmail_message_id: msg.id,
-              thread_id: msg.threadId,
-              subject: msg.subject,
-              snippet: msg.snippet,
-              direction: msg.direction,
-              email_date: msg.date.toISOString(),
-            },
-            { onConflict: 'gmail_message_id' }
-          );
-          emailsSynced++;
-        } catch (err) {
-          console.error('Failed to insert email:', err);
+      // Try name match if we have a name
+      if (name) {
+        const byName = contactsByName.get(name.toLowerCase());
+        if (byName) {
+          matchedByName++;
+          return byName;
         }
       }
 
-      // Insert calendar interactions
-      for (const event of data.meetings) {
+      unmatched++;
+      return null;
+    };
+
+    // Extract name from email header "Name <email>" format
+    const extractNameFromHeader = (header: string): string | undefined => {
+      const match = header.match(/^([^<]+)</);
+      if (match) {
+        return match[1].trim();
+      }
+      return undefined;
+    };
+
+    // Process and store ALL email interactions
+    for (const msg of messages) {
+      try {
+        const contactEmail = msg.direction === 'sent' ? msg.to[0] : msg.from;
+        const contactId = findContact(contactEmail);
+
+        await supabase.from('email_interactions').upsert(
+          {
+            owner_id: user.id,
+            contact_id: contactId, // Can be null - will match later
+            contact_email: contactEmail, // Store for later matching
+            gmail_message_id: msg.id,
+            thread_id: msg.threadId,
+            subject: msg.subject,
+            snippet: msg.snippet,
+            direction: msg.direction,
+            email_date: msg.date.toISOString(),
+          },
+          { onConflict: 'gmail_message_id' }
+        );
+        emailsSynced++;
+      } catch (err) {
+        console.error('Failed to insert email:', err);
+      }
+    }
+
+    // Process and store ALL calendar events
+    for (const event of events) {
+      for (const attendeeEmail of event.attendees) {
         try {
+          const contactId = findContact(attendeeEmail);
+
           await supabase.from('calendar_interactions').upsert(
             {
               owner_id: user.id,
-              contact_id: contactId,
-              gcal_event_id: event.id,
+              contact_id: contactId, // Can be null - will match later
+              contact_email: attendeeEmail, // Store for later matching
+              gcal_event_id: `${event.id}_${attendeeEmail}`,
               summary: event.summary,
               event_start: event.start.toISOString(),
               event_end: event.end?.toISOString() || null,
@@ -112,27 +153,76 @@ export async function POST(request: NextRequest) {
           console.error('Failed to insert calendar event:', err);
         }
       }
+    }
 
-      // Update contact proximity score
-      const { data: scoreData } = await supabase.rpc('calculate_proximity_score', {
-        contact_uuid: contactId,
-      });
+    // Update proximity scores for matched contacts
+    const matchedContactIds = new Set<string>();
 
-      if (scoreData !== null) {
-        // Find last interaction date
-        const lastEmail = data.emails.length > 0
-          ? Math.max(...data.emails.map((e) => e.date.getTime()))
-          : 0;
-        const lastMeeting = data.meetings.length > 0
-          ? Math.max(...data.meetings.map((e) => e.start.getTime()))
-          : 0;
-        const lastInteraction = Math.max(lastEmail, lastMeeting);
+    // Collect all matched contact IDs
+    const { data: matchedEmails } = await supabase
+      .from('email_interactions')
+      .select('contact_id')
+      .eq('owner_id', user.id)
+      .not('contact_id', 'is', null);
+
+    const { data: matchedMeetings } = await supabase
+      .from('calendar_interactions')
+      .select('contact_id')
+      .eq('owner_id', user.id)
+      .not('contact_id', 'is', null);
+
+    matchedEmails?.forEach((e) => e.contact_id && matchedContactIds.add(e.contact_id));
+    matchedMeetings?.forEach((m) => m.contact_id && matchedContactIds.add(m.contact_id));
+
+    // Update proximity scores
+    let contactsUpdated = 0;
+    for (const contactId of matchedContactIds) {
+      try {
+        // Count interactions
+        const { count: emailCount } = await supabase
+          .from('email_interactions')
+          .select('*', { count: 'exact', head: true })
+          .eq('contact_id', contactId);
+
+        const { count: meetingCount } = await supabase
+          .from('calendar_interactions')
+          .select('*', { count: 'exact', head: true })
+          .eq('contact_id', contactId);
+
+        // Get last interaction
+        const { data: lastEmail } = await supabase
+          .from('email_interactions')
+          .select('email_date')
+          .eq('contact_id', contactId)
+          .order('email_date', { ascending: false })
+          .limit(1)
+          .single();
+
+        const { data: lastMeeting } = await supabase
+          .from('calendar_interactions')
+          .select('event_start')
+          .eq('contact_id', contactId)
+          .order('event_start', { ascending: false })
+          .limit(1)
+          .single();
+
+        const lastEmailDate = lastEmail?.email_date ? new Date(lastEmail.email_date).getTime() : 0;
+        const lastMeetingDate = lastMeeting?.event_start ? new Date(lastMeeting.event_start).getTime() : 0;
+        const lastInteraction = Math.max(lastEmailDate, lastMeetingDate);
+
+        // Simple proximity score: recency + frequency
+        const daysSinceInteraction = lastInteraction > 0
+          ? (Date.now() - lastInteraction) / (1000 * 60 * 60 * 24)
+          : 365;
+        const recencyScore = Math.max(0, 50 - daysSinceInteraction); // 0-50 points
+        const frequencyScore = Math.min(50, ((emailCount || 0) + (meetingCount || 0) * 3)); // 0-50 points
+        const proximityScore = Math.round(recencyScore + frequencyScore);
 
         await supabase
           .from('contacts')
           .update({
-            proximity_score: scoreData,
-            interaction_count: data.emails.length + data.meetings.length,
+            proximity_score: proximityScore,
+            interaction_count: (emailCount || 0) + (meetingCount || 0),
             last_interaction_at: lastInteraction > 0
               ? new Date(lastInteraction).toISOString()
               : null,
@@ -140,6 +230,8 @@ export async function POST(request: NextRequest) {
           .eq('id', contactId);
 
         contactsUpdated++;
+      } catch (err) {
+        console.error('Failed to update contact proximity:', err);
       }
     }
 
@@ -148,6 +240,11 @@ export async function POST(request: NextRequest) {
       emailsSynced,
       meetingsSynced,
       contactsUpdated,
+      matching: {
+        byEmail: matchedByEmail,
+        byName: matchedByName,
+        unmatched,
+      },
     });
   } catch (error) {
     console.error('Sync error:', error);
