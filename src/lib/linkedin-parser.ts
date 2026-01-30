@@ -1,3 +1,7 @@
+/**
+ * LinkedIn CSV Parser v2.0
+ * Handles notes/metadata rows at the top of LinkedIn export files
+ */
 import Papa from 'papaparse';
 import { LinkedInConnection } from '@/types/database';
 
