@@ -101,10 +101,18 @@ export async function fetchGmailMessages(
 
     console.log(`[Gmail] Found ${messageIds.length} message IDs, fetching details in parallel...`);
 
-    // Fetch message details in parallel batches (much faster)
-    const batchSize = 50; // Fetch 50 at a time in parallel
+    // Helper to delay between batches to avoid rate limits
+    const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+    // Fetch message details in parallel batches with rate limiting
+    const batchSize = 25; // Reduced from 50 to avoid rate limits
     for (let i = 0; i < messageIds.length; i += batchSize) {
       const batch = messageIds.slice(i, i + batchSize);
+
+      // Add delay between batches to stay under rate limit (except first batch)
+      if (i > 0) {
+        await delay(1000); // 1 second delay between batches
+      }
 
       const batchResults = await Promise.allSettled(
         batch.map(async (msgId) => {
