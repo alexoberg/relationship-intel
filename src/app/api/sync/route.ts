@@ -189,83 +189,102 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Update proximity scores for matched contacts
-    const matchedContactIds = new Set<string>();
-
-    // Collect all matched contact IDs
-    const { data: matchedEmails } = await supabase
+    // Update proximity scores efficiently using aggregated queries
+    // Get email interaction stats grouped by contact
+    const { data: emailStats } = await supabase
       .from('email_interactions')
-      .select('contact_id')
+      .select('contact_id, email_date')
       .eq('owner_id', user.id)
       .not('contact_id', 'is', null);
 
-    const { data: matchedMeetings } = await supabase
+    // Get calendar interaction stats grouped by contact
+    const { data: calendarStats } = await supabase
       .from('calendar_interactions')
-      .select('contact_id')
+      .select('contact_id, event_start')
       .eq('owner_id', user.id)
       .not('contact_id', 'is', null);
 
-    matchedEmails?.forEach((e) => e.contact_id && matchedContactIds.add(e.contact_id));
-    matchedMeetings?.forEach((m) => m.contact_id && matchedContactIds.add(m.contact_id));
+    // Aggregate stats by contact
+    const contactStats = new Map<string, {
+      emailCount: number;
+      meetingCount: number;
+      lastEmailDate: number;
+      lastMeetingDate: number;
+    }>();
 
-    // Update proximity scores
+    // Process email stats
+    (emailStats || []).forEach((e) => {
+      if (!e.contact_id) return;
+      const existing = contactStats.get(e.contact_id) || {
+        emailCount: 0,
+        meetingCount: 0,
+        lastEmailDate: 0,
+        lastMeetingDate: 0,
+      };
+      existing.emailCount++;
+      const emailDate = e.email_date ? new Date(e.email_date).getTime() : 0;
+      existing.lastEmailDate = Math.max(existing.lastEmailDate, emailDate);
+      contactStats.set(e.contact_id, existing);
+    });
+
+    // Process calendar stats
+    (calendarStats || []).forEach((m) => {
+      if (!m.contact_id) return;
+      const existing = contactStats.get(m.contact_id) || {
+        emailCount: 0,
+        meetingCount: 0,
+        lastEmailDate: 0,
+        lastMeetingDate: 0,
+      };
+      existing.meetingCount++;
+      const meetingDate = m.event_start ? new Date(m.event_start).getTime() : 0;
+      existing.lastMeetingDate = Math.max(existing.lastMeetingDate, meetingDate);
+      contactStats.set(m.contact_id, existing);
+    });
+
+    // Batch update all contacts
     let contactsUpdated = 0;
-    for (const contactId of matchedContactIds) {
-      try {
-        // Count interactions
-        const { count: emailCount } = await supabase
-          .from('email_interactions')
-          .select('*', { count: 'exact', head: true })
-          .eq('contact_id', contactId);
+    const updates: Array<{
+      id: string;
+      proximity_score: number;
+      interaction_count: number;
+      last_interaction_at: string | null;
+    }> = [];
 
-        const { count: meetingCount } = await supabase
-          .from('calendar_interactions')
-          .select('*', { count: 'exact', head: true })
-          .eq('contact_id', contactId);
+    for (const [contactId, stats] of contactStats.entries()) {
+      const lastInteraction = Math.max(stats.lastEmailDate, stats.lastMeetingDate);
+      const daysSinceInteraction = lastInteraction > 0
+        ? (Date.now() - lastInteraction) / (1000 * 60 * 60 * 24)
+        : 365;
+      const recencyScore = Math.max(0, 50 - daysSinceInteraction);
+      const frequencyScore = Math.min(50, (stats.emailCount + stats.meetingCount * 3));
+      const proximityScore = Math.round(recencyScore + frequencyScore);
 
-        // Get last interaction
-        const { data: lastEmail } = await supabase
-          .from('email_interactions')
-          .select('email_date')
-          .eq('contact_id', contactId)
-          .order('email_date', { ascending: false })
-          .limit(1)
-          .single();
+      updates.push({
+        id: contactId,
+        proximity_score: proximityScore,
+        interaction_count: stats.emailCount + stats.meetingCount,
+        last_interaction_at: lastInteraction > 0
+          ? new Date(lastInteraction).toISOString()
+          : null,
+      });
+    }
 
-        const { data: lastMeeting } = await supabase
-          .from('calendar_interactions')
-          .select('event_start')
-          .eq('contact_id', contactId)
-          .order('event_start', { ascending: false })
-          .limit(1)
-          .single();
-
-        const lastEmailDate = lastEmail?.email_date ? new Date(lastEmail.email_date).getTime() : 0;
-        const lastMeetingDate = lastMeeting?.event_start ? new Date(lastMeeting.event_start).getTime() : 0;
-        const lastInteraction = Math.max(lastEmailDate, lastMeetingDate);
-
-        // Simple proximity score: recency + frequency
-        const daysSinceInteraction = lastInteraction > 0
-          ? (Date.now() - lastInteraction) / (1000 * 60 * 60 * 24)
-          : 365;
-        const recencyScore = Math.max(0, 50 - daysSinceInteraction); // 0-50 points
-        const frequencyScore = Math.min(50, ((emailCount || 0) + (meetingCount || 0) * 3)); // 0-50 points
-        const proximityScore = Math.round(recencyScore + frequencyScore);
-
-        await supabase
+    // Update contacts in batches of 50
+    const batchSize = 50;
+    for (let i = 0; i < updates.length; i += batchSize) {
+      const batch = updates.slice(i, i + batchSize);
+      for (const update of batch) {
+        const { error } = await supabase
           .from('contacts')
           .update({
-            proximity_score: proximityScore,
-            interaction_count: (emailCount || 0) + (meetingCount || 0),
-            last_interaction_at: lastInteraction > 0
-              ? new Date(lastInteraction).toISOString()
-              : null,
+            proximity_score: update.proximity_score,
+            interaction_count: update.interaction_count,
+            last_interaction_at: update.last_interaction_at,
           })
-          .eq('id', contactId);
+          .eq('id', update.id);
 
-        contactsUpdated++;
-      } catch (err) {
-        console.error('Failed to update contact proximity:', err);
+        if (!error) contactsUpdated++;
       }
     }
 
