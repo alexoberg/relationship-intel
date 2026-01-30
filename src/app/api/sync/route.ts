@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
       fetchCalendarEvents(
         profile.google_access_token,
         profile.google_refresh_token || undefined,
-        730 // 2 years of calendar events
+        1825 // 5 years of calendar events
       ),
     ]);
 
