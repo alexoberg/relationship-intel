@@ -3,8 +3,6 @@ import { createClient } from '@/lib/supabase/server';
 import {
   fetchGmailMessages,
   fetchCalendarEvents,
-  GmailMessage,
-  CalendarEvent,
 } from '@/lib/google';
 
 export async function POST(request: NextRequest) {
@@ -48,114 +46,137 @@ export async function POST(request: NextRequest) {
       ),
     ]);
 
-    // Get all contacts for matching (by email AND by name)
-    const { data: contacts } = await supabase
+    console.log(`[Sync] Fetched ${messages.length} Gmail messages, ${events.length} calendar events`);
+
+    // Extract email and name from header "Name <email>" format
+    const extractFromHeader = (header: string): { email: string; name: string | null } => {
+      const emailMatch = header.match(/<([^>]+)>/);
+      const nameMatch = header.match(/^([^<]+)</);
+
+      return {
+        email: emailMatch ? emailMatch[1].trim().toLowerCase() : header.trim().toLowerCase(),
+        name: nameMatch ? nameMatch[1].trim() : null,
+      };
+    };
+
+    // Collect all unique email addresses from Gmail (excluding user's own email)
+    const userEmail = user.email?.toLowerCase() || '';
+    const emailContactMap = new Map<string, { email: string; name: string | null }>();
+
+    for (const msg of messages) {
+      // Get the contact from the email (recipient if sent, sender if received)
+      const rawHeader = msg.direction === 'sent' ? msg.to[0] : msg.from;
+      const { email, name } = extractFromHeader(rawHeader);
+
+      // Skip user's own email
+      if (email === userEmail) continue;
+
+      // Store unique contacts (prefer entries with names)
+      if (!emailContactMap.has(email) || (name && !emailContactMap.get(email)?.name)) {
+        emailContactMap.set(email, { email, name });
+      }
+    }
+
+    // Also collect from calendar events
+    for (const event of events) {
+      for (const attendeeRaw of event.attendees) {
+        const { email, name } = extractFromHeader(attendeeRaw);
+        if (email === userEmail) continue;
+
+        if (!emailContactMap.has(email) || (name && !emailContactMap.get(email)?.name)) {
+          emailContactMap.set(email, { email, name });
+        }
+      }
+    }
+
+    console.log(`[Sync] Found ${emailContactMap.size} unique email addresses in Gmail/Calendar`);
+
+    // Get existing contacts
+    const { data: existingContacts } = await supabase
       .from('contacts')
-      .select('id, email, full_name, first_name, last_name')
+      .select('id, email')
       .eq('owner_id', user.id);
 
-    // Build lookup maps with multiple matching strategies
-    const contactsByEmail = new Map<string, string>();
-    const contactsByFullName = new Map<string, string>();
-    const contactsByFirstLast = new Map<string, string>(); // "firstname lastname" normalized
+    const existingEmails = new Set(
+      (existingContacts || [])
+        .filter(c => c.email)
+        .map(c => c.email!.toLowerCase())
+    );
 
-    (contacts || []).forEach((c) => {
+    // Find new contacts to create
+    const newContacts: Array<{
+      owner_id: string;
+      email: string;
+      full_name: string;
+      first_name: string;
+      last_name: string;
+      source: string;
+      category: string;
+    }> = [];
+
+    for (const [email, data] of emailContactMap) {
+      if (!existingEmails.has(email)) {
+        // Parse name into first/last
+        let firstName = '';
+        let lastName = '';
+        let fullName = data.name || email.split('@')[0];
+
+        if (data.name) {
+          const parts = data.name.split(/\s+/);
+          firstName = parts[0] || '';
+          lastName = parts.slice(1).join(' ') || '';
+        } else {
+          // Use email prefix as name
+          firstName = email.split('@')[0];
+        }
+
+        newContacts.push({
+          owner_id: user.id,
+          email,
+          full_name: fullName,
+          first_name: firstName,
+          last_name: lastName,
+          source: 'gmail',
+          category: 'uncategorized',
+        });
+      }
+    }
+
+    console.log(`[Sync] Creating ${newContacts.length} new contacts from Gmail`);
+
+    // Insert new contacts in batches
+    let contactsCreated = 0;
+    if (newContacts.length > 0) {
+      const batchSize = 100;
+      for (let i = 0; i < newContacts.length; i += batchSize) {
+        const batch = newContacts.slice(i, i + batchSize);
+        const { error } = await supabase
+          .from('contacts')
+          .upsert(batch, { onConflict: 'owner_id,email' });
+
+        if (error) {
+          console.error('Contact batch insert error:', error);
+        } else {
+          contactsCreated += batch.length;
+        }
+      }
+    }
+
+    // Refresh contacts list to get IDs for the new contacts
+    const { data: allContacts } = await supabase
+      .from('contacts')
+      .select('id, email')
+      .eq('owner_id', user.id);
+
+    // Build email -> contact_id lookup
+    const contactIdByEmail = new Map<string, string>();
+    (allContacts || []).forEach(c => {
       if (c.email) {
-        contactsByEmail.set(c.email.toLowerCase(), c.id);
-      }
-      if (c.full_name) {
-        contactsByFullName.set(c.full_name.toLowerCase(), c.id);
-      }
-      // Also index by first+last name for flexible matching
-      if (c.first_name && c.last_name) {
-        const key = `${c.first_name} ${c.last_name}`.toLowerCase();
-        contactsByFirstLast.set(key, c.id);
+        contactIdByEmail.set(c.email.toLowerCase(), c.id);
       }
     });
 
-    // Debug: Log what contacts we have
-    console.log(`[Sync] Contact names in DB:`, (contacts || []).map(c => c.full_name).join(', '));
-
-    let emailsSynced = 0;
-    let meetingsSynced = 0;
-    let matchedByEmail = 0;
-    let matchedByName = 0;
-    let unmatched = 0;
-
-    // Normalize name for matching (remove middle names/initials, extra spaces)
-    const normalizeName = (name: string): string => {
-      // Split into parts
-      const parts = name.toLowerCase().split(/\s+/).filter(p => p.length > 0);
-      if (parts.length === 0) return '';
-      if (parts.length === 1) return parts[0];
-      // Take first and last only (skip middle names/initials)
-      return `${parts[0]} ${parts[parts.length - 1]}`;
-    };
-
-    // Helper to find contact - try email first, then various name strategies
-    const findContact = (email: string, name?: string): string | null => {
-      // Try email match first
-      const byEmail = contactsByEmail.get(email.toLowerCase());
-      if (byEmail) {
-        matchedByEmail++;
-        return byEmail;
-      }
-
-      // Try name matches if we have a name
-      if (name) {
-        const normalizedName = name.toLowerCase();
-
-        // Try exact full name match
-        const byFullName = contactsByFullName.get(normalizedName);
-        if (byFullName) {
-          matchedByName++;
-          return byFullName;
-        }
-
-        // Try first+last match (handles middle names in Gmail)
-        const simplifiedName = normalizeName(name);
-        const byFirstLast = contactsByFirstLast.get(simplifiedName);
-        if (byFirstLast) {
-          matchedByName++;
-          return byFirstLast;
-        }
-      }
-
-      unmatched++;
-      return null;
-    };
-
-    // Extract name from email header "Name <email>" format
-    const extractNameFromHeader = (header: string): string | undefined => {
-      const match = header.match(/^([^<]+)</);
-      if (match) {
-        return match[1].trim();
-      }
-      return undefined;
-    };
-
-    // Extract just the email address from "Name <email>" format
-    const extractEmailFromHeader = (header: string): string => {
-      const match = header.match(/<([^>]+)>/);
-      if (match) {
-        return match[1].trim();
-      }
-      // If no angle brackets, assume it's just an email
-      return header.trim();
-    };
-
-    // Debug: Log how many messages we got from Gmail
-    console.log(`[Sync] Fetched ${messages.length} Gmail messages, ${events.length} calendar events`);
-    console.log(`[Sync] Have ${contacts?.length || 0} contacts to match against`);
-
-    // Debug: Sample some Gmail names/emails we'll try to match
-    const sampleEmails = messages.slice(0, 5).map(m => {
-      const raw = m.direction === 'sent' ? m.to[0] : m.from;
-      return raw;
-    });
-    console.log(`[Sync] Sample Gmail headers:`, sampleEmails);
-
-    // Process email interactions in batches (only matched ones for now)
+    // Now process all email interactions
     const emailBatch: Array<{
       owner_id: string;
       contact_id: string;
@@ -169,11 +190,12 @@ export async function POST(request: NextRequest) {
 
     for (const msg of messages) {
       const rawHeader = msg.direction === 'sent' ? msg.to[0] : msg.from;
-      const contactEmail = extractEmailFromHeader(rawHeader);
-      const contactName = extractNameFromHeader(rawHeader);
-      const contactId = findContact(contactEmail, contactName);
+      const { email } = extractFromHeader(rawHeader);
 
-      // Only store if we have a matching contact
+      // Skip user's own email
+      if (email === userEmail) continue;
+
+      const contactId = contactIdByEmail.get(email);
       if (contactId) {
         emailBatch.push({
           owner_id: user.id,
@@ -188,20 +210,27 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Batch upsert emails
-    if (emailBatch.length > 0) {
-      const { error: emailError } = await supabase
-        .from('email_interactions')
-        .upsert(emailBatch, { onConflict: 'gmail_message_id' });
+    console.log(`[Sync] Storing ${emailBatch.length} email interactions`);
 
-      if (emailError) {
-        console.error('Email batch insert error:', emailError);
-      } else {
-        emailsSynced = emailBatch.length;
+    // Batch upsert emails
+    let emailsSynced = 0;
+    if (emailBatch.length > 0) {
+      const batchSize = 100;
+      for (let i = 0; i < emailBatch.length; i += batchSize) {
+        const batch = emailBatch.slice(i, i + batchSize);
+        const { error } = await supabase
+          .from('email_interactions')
+          .upsert(batch, { onConflict: 'gmail_message_id' });
+
+        if (error) {
+          console.error('Email batch insert error:', error);
+        } else {
+          emailsSynced += batch.length;
+        }
       }
     }
 
-    // Process calendar events in batches (only matched ones for now)
+    // Process calendar events
     const calendarBatch: Array<{
       owner_id: string;
       contact_id: string;
@@ -213,16 +242,17 @@ export async function POST(request: NextRequest) {
 
     for (const event of events) {
       for (const attendeeRaw of event.attendees) {
-        const attendeeEmail = extractEmailFromHeader(attendeeRaw);
-        const attendeeName = extractNameFromHeader(attendeeRaw);
-        const contactId = findContact(attendeeEmail, attendeeName);
+        const { email } = extractFromHeader(attendeeRaw);
 
-        // Only store if we have a matching contact
+        // Skip user's own email
+        if (email === userEmail) continue;
+
+        const contactId = contactIdByEmail.get(email);
         if (contactId) {
           calendarBatch.push({
             owner_id: user.id,
             contact_id: contactId,
-            gcal_event_id: `${event.id}_${attendeeEmail}`,
+            gcal_event_id: `${event.id}_${email}`,
             summary: event.summary || '',
             event_start: event.start.toISOString(),
             event_end: event.end?.toISOString() || null,
@@ -231,40 +261,36 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Debug: Log matching results
-    console.log(`[Sync] Email matching: ${matchedByEmail} by email, ${matchedByName} by name, ${unmatched} unmatched`);
+    console.log(`[Sync] Storing ${calendarBatch.length} calendar interactions`);
 
     // Batch upsert calendar events
+    let meetingsSynced = 0;
     if (calendarBatch.length > 0) {
-      const { error: calError } = await supabase
-        .from('calendar_interactions')
-        .upsert(calendarBatch, { onConflict: 'gcal_event_id' });
+      const batchSize = 100;
+      for (let i = 0; i < calendarBatch.length; i += batchSize) {
+        const batch = calendarBatch.slice(i, i + batchSize);
+        const { error } = await supabase
+          .from('calendar_interactions')
+          .upsert(batch, { onConflict: 'gcal_event_id' });
 
-      if (calError) {
-        console.error('Calendar batch insert error:', calError);
-      } else {
-        meetingsSynced = calendarBatch.length;
+        if (error) {
+          console.error('Calendar batch insert error:', error);
+        } else {
+          meetingsSynced += batch.length;
+        }
       }
     }
 
-    // Skip proximity score updates during sync to avoid timeout
-    // Proximity scores will be calculated on-demand when viewing contacts
-    const contactsUpdated = 0;
-
     return NextResponse.json({
       success: true,
+      contactsCreated,
       emailsSynced,
       meetingsSynced,
-      contactsUpdated,
       debug: {
         gmailMessagesFetched: messages.length,
         calendarEventsFetched: events.length,
-        contactsInDb: contacts?.length || 0,
-      },
-      matching: {
-        byEmail: matchedByEmail,
-        byName: matchedByName,
-        unmatched,
+        uniqueEmailsFound: emailContactMap.size,
+        totalContactsNow: allContacts?.length || 0,
       },
     });
   } catch (error) {
