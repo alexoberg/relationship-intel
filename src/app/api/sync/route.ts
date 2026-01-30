@@ -41,13 +41,14 @@ export async function POST(request: NextRequest) {
     console.log(`[Sync] ${isFirstSync ? 'First sync - fetching all data' : `Incremental sync since ${lastGmailSync?.toISOString()}`}`);
 
     // Fetch Gmail messages and Calendar events independently
-    // First sync: fetch up to 10,000 messages, 5 years of calendar
+    // First sync: fetch up to 1,500 messages (fits in 60s timeout with rate limiting)
     // Incremental sync: fetch only new data since last sync
+    // Note: Run sync multiple times to gradually import all emails
     const [messages, events] = await Promise.all([
       fetchGmailMessages(
         profile.google_access_token,
         profile.google_refresh_token || undefined,
-        isFirstSync ? 10000 : 5000, // Smaller limit for incremental
+        isFirstSync ? 1500 : 1000, // Reduced to fit in 60s Vercel timeout
         lastGmailSync // Pass last sync date for incremental
       ),
       fetchCalendarEvents(
