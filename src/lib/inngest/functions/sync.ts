@@ -118,67 +118,83 @@ export const backgroundSync = inngest.createFunction(
       return ids;
     });
 
-    // Step 2: Fetch message details in batches
+    // Step 2: Fetch message details in chunked steps with parallel processing
+    // Process 1000 messages per Inngest step to minimize step count (~200 steps for 200k messages)
+    const MESSAGES_PER_STEP = 1000;
+    const PARALLEL_BATCHES = 5; // Run 5 batches of 50 in parallel (250 concurrent requests)
     const messages: SerializedGmailMessage[] = [];
-    const totalBatches = Math.ceil(messageIds.length / BATCH_SIZE);
+    const totalSteps = Math.ceil(messageIds.length / MESSAGES_PER_STEP);
 
-    for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
-      const batchMessages = await step.run(`fetch-gmail-batch-${batchIndex}`, async () => {
-        const start = batchIndex * BATCH_SIZE;
-        const batch = messageIds.slice(start, start + BATCH_SIZE);
-        const batchResults: SerializedGmailMessage[] = [];
+    for (let stepIndex = 0; stepIndex < totalSteps; stepIndex++) {
+      const stepMessages = await step.run(`fetch-gmail-chunk-${stepIndex}`, async () => {
+        const stepStart = stepIndex * MESSAGES_PER_STEP;
+        const stepEnd = Math.min(stepStart + MESSAGES_PER_STEP, messageIds.length);
+        const stepIds = messageIds.slice(stepStart, stepEnd);
+        const stepResults: SerializedGmailMessage[] = [];
 
-        // Rate limiting delay
-        if (batchIndex > 0) {
-          await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY_MS));
-        }
+        // Process in parallel waves of batches
+        for (let waveStart = 0; waveStart < stepIds.length; waveStart += BATCH_SIZE * PARALLEL_BATCHES) {
+          // Rate limiting delay between waves
+          if (waveStart > 0) {
+            await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY_MS));
+          }
 
-        const results = await Promise.allSettled(
-          batch.map(async (msgId) => {
-            const detail = await gmail.users.messages.get({
-              userId: 'me',
-              id: msgId,
-              format: 'metadata',
-              metadataHeaders: ['From', 'To', 'Subject', 'Date'],
-            });
+          // Create parallel batch promises
+          const batchPromises: Promise<SerializedGmailMessage[]>[] = [];
+          for (let b = 0; b < PARALLEL_BATCHES; b++) {
+            const batchStart = waveStart + b * BATCH_SIZE;
+            if (batchStart >= stepIds.length) break;
+            const batch = stepIds.slice(batchStart, batchStart + BATCH_SIZE);
 
-            const headers = detail.data.payload?.headers || [];
-            const getHeader = (name: string) =>
-              headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value || '';
+            batchPromises.push(
+              Promise.allSettled(
+                batch.map(async (msgId) => {
+                  const detail = await gmail.users.messages.get({
+                    userId: 'me',
+                    id: msgId,
+                    format: 'metadata',
+                    metadataHeaders: ['From', 'To', 'Subject', 'Date'],
+                  });
 
-            const from = getHeader('From');
-            const to = getHeader('To');
-            const labels = detail.data.labelIds || [];
-            const direction = labels.includes('SENT') ? 'sent' : 'received';
+                  const headers = detail.data.payload?.headers || [];
+                  const getHeader = (name: string) =>
+                    headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value || '';
 
-            return {
-              id: msgId,
-              threadId: detail.data.threadId!,
-              subject: getHeader('Subject'),
-              snippet: detail.data.snippet || '',
-              from: extractEmail(from),
-              to: to.split(',').map((e) => extractEmail(e.trim())),
-              dateIso: new Date(getHeader('Date')).toISOString(),
-              direction,
-            } as SerializedGmailMessage;
-          })
-        );
+                  const from = getHeader('From');
+                  const to = getHeader('To');
+                  const labels = detail.data.labelIds || [];
+                  const direction = labels.includes('SENT') ? 'sent' : 'received';
 
-        for (const result of results) {
-          if (result.status === 'fulfilled') {
-            batchResults.push(result.value);
+                  return {
+                    id: msgId,
+                    threadId: detail.data.threadId!,
+                    subject: getHeader('Subject'),
+                    snippet: detail.data.snippet || '',
+                    from: extractEmail(from),
+                    to: to.split(',').map((e) => extractEmail(e.trim())),
+                    dateIso: new Date(getHeader('Date')).toISOString(),
+                    direction,
+                  } as SerializedGmailMessage;
+                })
+              ).then(results => results
+                .filter((r): r is PromiseFulfilledResult<SerializedGmailMessage> => r.status === 'fulfilled')
+                .map(r => r.value)
+              )
+            );
+          }
+
+          // Wait for all parallel batches
+          const waveResults = await Promise.all(batchPromises);
+          for (const batchResult of waveResults) {
+            stepResults.push(...batchResult);
           }
         }
 
-        return batchResults;
+        console.log(`[Sync] Processed ${stepEnd}/${messageIds.length} messages`);
+        return stepResults;
       });
 
-      messages.push(...batchMessages);
-
-      // Log progress every 10 batches
-      if (batchIndex % 10 === 0) {
-        console.log(`[Sync] Processed ${Math.min((batchIndex + 1) * BATCH_SIZE, messageIds.length)}/${messageIds.length} messages`);
-      }
+      messages.push(...stepMessages);
     }
 
     // Step 3: Fetch calendar events
