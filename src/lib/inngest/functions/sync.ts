@@ -119,9 +119,10 @@ export const backgroundSync = inngest.createFunction(
     });
 
     // Step 2: Fetch message details in chunked steps with parallel processing
-    // Process 1000 messages per Inngest step to minimize step count (~200 steps for 200k messages)
-    const MESSAGES_PER_STEP = 1000;
-    const PARALLEL_BATCHES = 5; // Run 5 batches of 50 in parallel (250 concurrent requests)
+    // Process 200 messages per Inngest step to stay within Vercel 10s timeout
+    // 200 msgs = 1 wave of 4 batches of 50 = ~5-7 seconds per step
+    const MESSAGES_PER_STEP = 200;
+    const PARALLEL_BATCHES = 4; // Run 4 batches of 50 in parallel (200 messages per wave)
     const messages: SerializedGmailMessage[] = [];
     const totalSteps = Math.ceil(messageIds.length / MESSAGES_PER_STEP);
 
