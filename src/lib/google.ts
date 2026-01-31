@@ -105,14 +105,14 @@ export async function fetchGmailMessages(
     const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
     // Fetch message details in parallel batches with rate limiting
-    // Optimized: larger batches (40) with shorter delays (500ms) to fit in 60s timeout
-    const batchSize = 40;
+    // Conservative: smaller batches (25) with longer delays (1s) to avoid quota errors
+    const batchSize = 25;
     for (let i = 0; i < messageIds.length; i += batchSize) {
       const batch = messageIds.slice(i, i + batchSize);
 
       // Add delay between batches to stay under rate limit (except first batch)
       if (i > 0) {
-        await delay(500); // 500ms delay between batches
+        await delay(1000); // 1 second delay between batches to stay under Gmail quota
       }
 
       const batchResults = await Promise.allSettled(

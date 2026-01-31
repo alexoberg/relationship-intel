@@ -5,7 +5,7 @@ import { google } from 'googleapis';
 import { classifyEmail, type EmailClassification } from '@/lib/email-filter';
 
 const BATCH_SIZE = 50; // Smaller batches for durability
-const RATE_LIMIT_DELAY_MS = 200;
+const RATE_LIMIT_DELAY_MS = 1000; // 1 second between batches to stay under Gmail quota
 
 // Internal types with ISO string dates (for Inngest serialization)
 interface SerializedGmailMessage {
