@@ -246,6 +246,8 @@ export const backgroundSync = inngest.createFunction(
 
     // Step 4: Process and store contacts
     const { contactsCreated, emailsSynced, meetingsSynced } = await step.run('store-data', async () => {
+      console.log(`[Sync] Starting store-data step with ${messages.length} messages and ${events.length} calendar events`);
+
       // Extract unique emails
       const emailContactMap = new Map<string, { email: string; name: string | null }>();
 
@@ -350,36 +352,52 @@ export const backgroundSync = inngest.createFunction(
         if (c.email) contactIdByEmail.set(c.email.toLowerCase(), c.id);
       });
 
-      // Store email interactions
+      // Store ALL email interactions (contact_id is nullable, we'll link later)
       const emailBatch = messages
         .filter(msg => {
           const email = extractEmail(msg.direction === 'sent' ? msg.to[0] : msg.from);
-          return email !== userEmail && contactIdByEmail.has(email);
+          return email !== userEmail; // Store all emails except self
         })
-        .map(msg => ({
-          owner_id: userId,
-          contact_id: contactIdByEmail.get(extractEmail(msg.direction === 'sent' ? msg.to[0] : msg.from))!,
-          gmail_message_id: msg.id,
-          thread_id: msg.threadId,
-          subject: msg.subject || '',
-          snippet: msg.snippet || '',
-          direction: msg.direction,
-          email_date: msg.dateIso,
-        }));
+        .map(msg => {
+          const contactEmail = extractEmail(msg.direction === 'sent' ? msg.to[0] : msg.from);
+          const contactId = contactIdByEmail.get(contactEmail) || null;
+          return {
+            owner_id: userId,
+            contact_id: contactId, // May be null if contact doesn't exist yet
+            contact_email: contactEmail, // Always store the email for later linking
+            gmail_message_id: msg.id,
+            thread_id: msg.threadId,
+            subject: msg.subject || '',
+            snippet: msg.snippet || '',
+            direction: msg.direction,
+            email_date: msg.dateIso,
+          };
+        });
+
+      console.log(`[Sync] Storing ${emailBatch.length} email interactions (${emailBatch.filter(e => e.contact_id).length} with contacts, ${emailBatch.filter(e => !e.contact_id).length} unmatched)`);
 
       let emailCount = 0;
+      let emailErrors = 0;
       for (let i = 0; i < emailBatch.length; i += 100) {
         const batch = emailBatch.slice(i, i + 100);
         const { error } = await supabase
           .from('email_interactions')
           .upsert(batch, { onConflict: 'gmail_message_id' });
-        if (!error) emailCount += batch.length;
+        if (error) {
+          emailErrors++;
+          if (emailErrors <= 3) console.error(`[Sync] Email batch error: ${error.message}`);
+        } else {
+          emailCount += batch.length;
+        }
       }
 
-      // Store calendar interactions
+      console.log(`[Sync] Stored ${emailCount} emails (${emailErrors} batch errors)`);
+
+      // Store ALL calendar interactions (contact_id is nullable, we'll link later)
       const calendarBatch: Array<{
         owner_id: string;
-        contact_id: string;
+        contact_id: string | null;
+        contact_email: string;
         gcal_event_id: string;
         summary: string;
         event_start: string;
@@ -390,28 +408,38 @@ export const backgroundSync = inngest.createFunction(
         for (const attendeeEmail of event.attendees) {
           const email = extractEmail(attendeeEmail);
           if (email === userEmail) continue;
-          const contactId = contactIdByEmail.get(email);
-          if (contactId) {
-            calendarBatch.push({
-              owner_id: userId,
-              contact_id: contactId,
-              gcal_event_id: `${event.id}_${email}`,
-              summary: event.summary || '',
-              event_start: event.startIso,
-              event_end: event.endIso,
-            });
-          }
+          const contactId = contactIdByEmail.get(email) || null;
+          calendarBatch.push({
+            owner_id: userId,
+            contact_id: contactId, // May be null if contact doesn't exist yet
+            contact_email: email, // Always store email for later linking
+            gcal_event_id: `${event.id}_${email}`,
+            summary: event.summary || '',
+            event_start: event.startIso,
+            event_end: event.endIso,
+          });
         }
       }
 
+      console.log(`[Sync] Storing ${calendarBatch.length} calendar interactions (${calendarBatch.filter(e => e.contact_id).length} with contacts, ${calendarBatch.filter(e => !e.contact_id).length} unmatched)`);
+
       let meetingCount = 0;
+      let meetingErrors = 0;
       for (let i = 0; i < calendarBatch.length; i += 100) {
         const batch = calendarBatch.slice(i, i + 100);
         const { error } = await supabase
           .from('calendar_interactions')
           .upsert(batch, { onConflict: 'gcal_event_id' });
-        if (!error) meetingCount += batch.length;
+        if (error) {
+          meetingErrors++;
+          if (meetingErrors <= 3) console.error(`[Sync] Calendar batch error: ${error.message}`);
+        } else {
+          meetingCount += batch.length;
+        }
       }
+
+      console.log(`[Sync] Stored ${meetingCount} meetings (${meetingErrors} batch errors)`);
+      console.log(`[Sync] Store-data complete: ${created} contacts created, ${emailCount} emails, ${meetingCount} meetings`);
 
       return {
         contactsCreated: created,
