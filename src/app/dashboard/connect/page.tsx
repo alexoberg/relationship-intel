@@ -127,23 +127,33 @@ export default function ConnectPage() {
               <span className="font-medium">Connected</span>
             </div>
 
-            <button
-              onClick={handleSync}
-              disabled={syncing}
-              className="flex items-center gap-2 bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700 transition-colors disabled:opacity-50"
-            >
-              {syncing ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  Syncing...
-                </>
-              ) : (
-                <>
-                  <RefreshCw className="w-5 h-5" />
-                  Sync Now
-                </>
-              )}
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleSync}
+                disabled={syncing}
+                className="flex items-center gap-2 bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700 transition-colors disabled:opacity-50"
+              >
+                {syncing ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Syncing...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="w-5 h-5" />
+                    Sync Now
+                  </>
+                )}
+              </button>
+
+              <a
+                href="/api/auth/google"
+                className="flex items-center gap-2 bg-gray-100 text-gray-700 px-4 py-3 rounded-lg font-medium hover:bg-gray-200 transition-colors"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Reconnect
+              </a>
+            </div>
           </div>
         ) : (
           <a
