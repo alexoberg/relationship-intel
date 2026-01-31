@@ -83,7 +83,7 @@ export const enrichContacts = inngest.createFunction(
       };
     }
 
-    // Step 3: Get contacts to enrich (priority order)
+    // Step 3: Get contacts to enrich (priority order, excluding marketing/generic)
     const actualBatchSize = Math.min(batchSize, maxEnrichments);
 
     const contacts = await step.run('get-priority-contacts', async () => {
@@ -92,6 +92,8 @@ export const enrichContacts = inngest.createFunction(
         .select('*')
         .eq('owner_id', userId)
         .eq('enriched', false)
+        .eq('is_likely_marketing', false)  // Skip marketing emails
+        .eq('is_generic_mailbox', false)   // Skip generic mailboxes
         .gte('enrichment_priority', priorityThreshold)
         .order('enrichment_priority', { ascending: false })
         .limit(actualBatchSize);
@@ -143,16 +145,11 @@ export const enrichContacts = inngest.createFunction(
           error_message: enrichResult.error || null,
         });
 
-        // Update budget tracking
-        await supabase
-          .from('enrichment_budget')
-          .update({
-            total_spent: budget.total_spent + ((i + 1) * PDL_COST_PER_LOOKUP),
-            enrichments_count: budget.enrichments_count + i + 1,
-            last_enrichment_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', budget.id);
+        // Update budget tracking with atomic increment (RPC call)
+        await supabase.rpc('increment_enrichment_budget', {
+          p_budget_id: budget.id,
+          p_cost: PDL_COST_PER_LOOKUP,
+        });
 
         return { ...enrichResult, contact };
       });
@@ -218,7 +215,29 @@ export const enrichContacts = inngest.createFunction(
             .insert(normalizedHistory);
         }
 
-        // Update contact with enriched data
+        // Build company history array from work history
+        const companyHistory = [...new Set(
+          workHistory
+            .map(j => normalizeCompanyName(j.company_name))
+            .filter(c => c && c.length > 0)
+        )];
+
+        // Calculate earliest work date and career years
+        const workDates = workHistory
+          .map(j => j.start_date)
+          .filter((d): d is string => !!d)
+          .map(d => new Date(d))
+          .filter(d => !isNaN(d.getTime()));
+
+        const earliestWorkDate = workDates.length > 0
+          ? new Date(Math.min(...workDates.map(d => d.getTime())))
+          : null;
+
+        const careerYears = earliestWorkDate
+          ? (Date.now() - earliestWorkDate.getTime()) / (365.25 * 24 * 60 * 60 * 1000)
+          : null;
+
+        // Update contact with enriched data INCLUDING company history
         const currentJob = workHistory.find(j => j.is_current) || workHistory[0];
 
         await supabase
@@ -232,6 +251,11 @@ export const enrichContacts = inngest.createFunction(
             current_company_industry: person.job_company_industry || currentJob?.company_industry || null,
             email: contact.email || person.work_email || person.personal_emails?.[0] || null,
             linkedin_url: contact.linkedin_url || person.linkedin_url || null,
+            // NEW: Company history fields
+            company_history: companyHistory,
+            company_history_count: companyHistory.length,
+            earliest_work_date: earliestWorkDate?.toISOString().split('T')[0] || null,
+            career_years: careerYears ? Math.round(careerYears * 10) / 10 : null,
           })
           .eq('id', contact.id);
       });

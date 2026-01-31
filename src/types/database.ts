@@ -74,6 +74,18 @@ export interface Contact {
   outbound_email_count: number;
   meeting_count: number;
 
+  // Email filtering fields (NEW)
+  is_likely_marketing: boolean;
+  is_generic_mailbox: boolean;
+  filter_reason: string | null;
+  email_domain: string | null;
+
+  // Company history fields (NEW)
+  company_history: string[];
+  company_history_count: number;
+  earliest_work_date: string | null;
+  career_years: number | null;
+
   // Joined data
   work_history?: WorkHistory[];
 }

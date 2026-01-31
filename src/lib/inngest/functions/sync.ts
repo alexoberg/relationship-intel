@@ -2,6 +2,7 @@ import { inngest } from '../client';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { createGoogleClient } from '@/lib/google';
 import { google } from 'googleapis';
+import { classifyEmail, type EmailClassification } from '@/lib/email-filter';
 
 const BATCH_SIZE = 50; // Smaller batches for durability
 const RATE_LIMIT_DELAY_MS = 200;
@@ -261,7 +262,7 @@ export const backgroundSync = inngest.createFunction(
         (existingContacts || []).filter(c => c.email).map(c => c.email!.toLowerCase())
       );
 
-      // Create new contacts
+      // Create new contacts with email classification
       const newContacts: Array<{
         owner_id: string;
         email: string;
@@ -270,11 +271,30 @@ export const backgroundSync = inngest.createFunction(
         last_name: string;
         source: string;
         category: string;
+        is_likely_marketing: boolean;
+        is_generic_mailbox: boolean;
+        filter_reason: string | null;
+        email_domain: string | null;
       }> = [];
+
+      // Track filtering stats
+      let filteredMarketing = 0;
+      let filteredGeneric = 0;
+      let filteredAutomation = 0;
 
       for (const [email, data] of emailContactMap) {
         if (!existingEmails.has(email)) {
+          // Classify the email
+          const classification = classifyEmail(email);
+
+          // Track stats
+          if (classification.isLikelyMarketing) filteredMarketing++;
+          if (classification.isGenericMailbox) filteredGeneric++;
+          if (classification.isAutomation) filteredAutomation++;
+
           const parts = data.name?.split(/\s+/) || [];
+          const domain = email.split('@')[1] || null;
+
           newContacts.push({
             owner_id: userId,
             email,
@@ -283,9 +303,15 @@ export const backgroundSync = inngest.createFunction(
             last_name: parts.slice(1).join(' ') || '',
             source: 'gmail',
             category: 'uncategorized',
+            is_likely_marketing: classification.isLikelyMarketing || classification.isAutomation,
+            is_generic_mailbox: classification.isGenericMailbox,
+            filter_reason: classification.reason || null,
+            email_domain: domain,
           });
         }
       }
+
+      console.log(`[Sync] Email classification: ${filteredMarketing} marketing, ${filteredGeneric} generic, ${filteredAutomation} automation out of ${emailContactMap.size} unique emails`);
 
       // Insert contacts in batches
       let created = 0;
