@@ -36,7 +36,20 @@ export interface SyncCompletedEvent {
   };
 }
 
+export interface BackgroundSyncStartedEvent {
+  name: 'sync/background-started';
+  data: {
+    userId: string;
+    accessToken: string;
+    refreshToken?: string;
+    maxMessages?: number;
+    sinceDate?: string;
+    triggerEnrichment?: boolean;
+  };
+}
+
 export type InngestEvents =
   | EnrichmentStartedEvent
   | EnrichmentCompletedEvent
-  | SyncCompletedEvent;
+  | SyncCompletedEvent
+  | BackgroundSyncStartedEvent;
