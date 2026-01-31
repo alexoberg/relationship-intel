@@ -5,6 +5,27 @@ export type ContactSource = 'linkedin_csv' | 'gmail' | 'gcal' | 'manual';
 export type EmailDirection = 'sent' | 'received';
 export type FirmType = 'vc' | 'angel_network' | 'pe' | 'accelerator';
 
+// Role and seniority normalization types
+export type RoleCategory =
+  | 'Engineering'
+  | 'Product'
+  | 'Design'
+  | 'Sales'
+  | 'Marketing'
+  | 'Executive'
+  | 'Operations'
+  | 'Investing'
+  | 'Customer Success';
+
+export type SeniorityLevel =
+  | 'C-Suite'
+  | 'VP'
+  | 'Director'
+  | 'Manager'
+  | 'Senior'
+  | 'Mid'
+  | 'Junior';
+
 export interface Profile {
   id: string;
   email: string;
@@ -44,6 +65,15 @@ export interface Contact {
   source: ContactSource;
   created_at: string;
   updated_at: string;
+
+  // Enrichment priority fields
+  enrichment_priority: number;
+  is_marketing_contact: boolean;
+  has_two_way_communication: boolean;
+  inbound_email_count: number;
+  outbound_email_count: number;
+  meeting_count: number;
+
   // Joined data
   work_history?: WorkHistory[];
 }
@@ -52,10 +82,15 @@ export interface WorkHistory {
   id: string;
   contact_id: string;
   company_name: string;
+  company_normalized: string | null;  // Normalized company name
   company_industry: string | null;
   company_size: string | null;
   company_linkedin_url: string | null;
+  company_domain: string | null;
   title: string;
+  title_normalized: string | null;    // Normalized title
+  role_category: RoleCategory | null; // Engineering, Sales, etc.
+  seniority_level: SeniorityLevel | null; // C-Suite, VP, Director, etc.
   start_date: string | null;
   end_date: string | null;
   is_current: boolean;
@@ -91,6 +126,10 @@ export interface KnownFirm {
   name: string;
   type: FirmType;
   aliases: string[];
+  domain: string | null;
+  industry: string | null;
+  company_size: string | null;
+  linkedin_url: string | null;
   created_at: string;
 }
 
@@ -219,4 +258,48 @@ export interface JoinTeamResult {
   error?: string;
   team_id?: string;
   team_name?: string;
+}
+
+// Enrichment pipeline types
+export interface EnrichmentBudget {
+  id: string;
+  user_id: string;
+  authorized_amount: number;       // Pre-authorized spend ($500 default)
+  increment_amount: number;        // Ask approval increment ($50 default)
+  total_spent: number;
+  enrichments_count: number;
+  last_enrichment_at: string | null;
+  pending_approval: boolean;
+  pending_approval_amount: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EnrichmentLog {
+  id: string;
+  user_id: string;
+  contact_id: string;
+  pdl_id: string | null;
+  pdl_status: number | null;
+  pdl_likelihood: number | null;
+  cost_usd: number;
+  source: 'pdl' | 'clearbit' | 'manual';
+  success: boolean;
+  error_message: string | null;
+  created_at: string;
+}
+
+export interface RoleCategoryLookup {
+  id: string;
+  name: RoleCategory;
+  keywords: string[];
+  created_at: string;
+}
+
+export interface SeniorityLevelLookup {
+  id: string;
+  name: SeniorityLevel;
+  rank: number;
+  keywords: string[];
+  created_at: string;
 }

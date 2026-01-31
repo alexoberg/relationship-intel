@@ -111,6 +111,12 @@ export async function POST(request: NextRequest) {
             id: '',
             contact_id: contact.id,
             created_at: new Date().toISOString(),
+            // Add new normalization fields with defaults
+            company_normalized: null,
+            company_domain: null,
+            title_normalized: null,
+            role_category: null,
+            seniority_level: null,
           })),
           (knownFirms || []) as KnownFirm[]
         );

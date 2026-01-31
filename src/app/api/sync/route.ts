@@ -4,6 +4,7 @@ import {
   fetchGmailMessages,
   fetchCalendarEvents,
 } from '@/lib/google';
+import { inngest } from '@/lib/inngest';
 
 export async function POST(request: NextRequest) {
   try {
@@ -305,11 +306,34 @@ export async function POST(request: NextRequest) {
 
     console.log(`[Sync] Updated last sync timestamp to ${syncStartTime.toISOString()}`);
 
+    // Trigger enrichment pipeline after sync (for LinkedIn contacts with high priority)
+    const { searchParams } = new URL(request.url);
+    const triggerEnrichment = searchParams.get('enrich') !== 'false';
+
+    let enrichmentTriggered = false;
+    if (triggerEnrichment && contactsCreated > 0) {
+      try {
+        await inngest.send({
+          name: 'enrichment/started',
+          data: {
+            userId: user.id,
+            batchSize: 50, // Start with smaller batch
+            priorityThreshold: 500, // Only high-priority contacts initially
+          },
+        });
+        enrichmentTriggered = true;
+        console.log(`[Sync] Triggered enrichment pipeline for user ${user.id}`);
+      } catch (enrichError) {
+        console.error('[Sync] Failed to trigger enrichment:', enrichError);
+      }
+    }
+
     return NextResponse.json({
       success: true,
       contactsCreated,
       emailsSynced,
       meetingsSynced,
+      enrichmentTriggered,
       syncType: isFirstSync ? 'full' : 'incremental',
       debug: {
         gmailMessagesFetched: messages.length,
