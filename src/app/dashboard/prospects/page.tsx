@@ -28,32 +28,18 @@ import {
 interface Prospect {
   id: string;
   team_id: string;
-  company_name: string;
+  name: string;  // DB uses 'name' not 'company_name'
   company_domain: string;
-  company_industry: string | null;
-  company_size: string | null;
-  company_linkedin_url: string | null;
-  company_website: string | null;
-  company_description: string | null;
-  funding_stage: string | null;
-  last_funding_date: string | null;
-  last_funding_amount: number | null;
-  total_funding: number | null;
-  helix_products: string[];
-  helix_fit_score: number;
-  helix_fit_reason: string | null;
-  helix_target_titles: string[];
+  linkedin_url: string | null;
+  stage_fit: number | null;
+  urgency_signals: number | null;
   connection_score: number;
-  has_warm_intro: boolean;
-  best_connector: string | null;
-  connection_type: string | null;
-  connection_context: string | null;
-  connections_count: number;
+  best_connection_path: Record<string, unknown> | null;
+  all_connection_paths: Record<string, unknown>[] | null;
   priority_score: number;
   status: string;
   is_good_fit: boolean | null;
   feedback_notes: string | null;
-  source: string;
   created_at: string;
 }
 
@@ -222,8 +208,8 @@ export default function ProspectsPage() {
 
   const filteredProspects = prospects.filter((p) =>
     search
-      ? p.company_name.toLowerCase().includes(search.toLowerCase()) ||
-        p.company_domain.toLowerCase().includes(search.toLowerCase())
+      ? p.name?.toLowerCase().includes(search.toLowerCase()) ||
+        p.company_domain?.toLowerCase().includes(search.toLowerCase())
       : true
   );
 
@@ -318,8 +304,8 @@ export default function ProspectsPage() {
                 <thead className="bg-gray-50 sticky top-0">
                   <tr>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Company</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Products</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Helix Fit</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Stage Fit</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Urgency</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Connections</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Priority</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Status</th>
@@ -336,19 +322,15 @@ export default function ProspectsPage() {
                     >
                       <td className="px-4 py-3">
                         <div>
-                          <p className="font-medium text-gray-900">{prospect.company_name}</p>
+                          <p className="font-medium text-gray-900">{prospect.name}</p>
                           <p className="text-sm text-gray-500">{prospect.company_domain}</p>
                         </div>
                       </td>
                       <td className="px-4 py-3">
-                        <div className="flex gap-1">
-                          {prospect.helix_products?.map((p) => (
-                            <HelixProductIcon key={p} product={p} />
-                          ))}
-                        </div>
+                        <ScoreBadge score={prospect.stage_fit || 0} label="Fit" />
                       </td>
                       <td className="px-4 py-3">
-                        <ScoreBadge score={prospect.helix_fit_score} label="Fit" />
+                        <ScoreBadge score={prospect.urgency_signals || 0} label="Urgency" />
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">

@@ -129,11 +129,8 @@ export async function POST(request: NextRequest) {
           .from('prospects')
           .upsert({
             team_id: teamId,
-            company_name: prospect.company_name,
+            name: prospect.company_name,  // DB uses 'name' not 'company_name'
             company_domain: prospect.company_domain,
-            company_industry: prospect.company_industry,
-            funding_stage: prospect.funding_stage,
-            source: 'seed',
           }, {
             onConflict: 'team_id,company_domain',
           })
