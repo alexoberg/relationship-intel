@@ -501,10 +501,10 @@ export const runProspectPipeline = inngest.createFunction(
         .single();
     });
 
-    if (prospect?.data) {
+    if (prospect) {
       await step.invoke('sync-connections', {
         function: syncProspectConnections,
-        data: { teamId: prospect.data.team_id, prospectIds: [prospectId] },
+        data: { teamId: prospect.team_id, prospectIds: [prospectId] },
       });
     }
 
