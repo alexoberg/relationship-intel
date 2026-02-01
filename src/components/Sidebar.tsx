@@ -13,6 +13,7 @@ import {
   LogOut,
   Sparkles,
   ChevronRight,
+  Target,
 } from 'lucide-react';
 import type { User } from '@supabase/supabase-js';
 import type { Profile } from '@/types/database';
@@ -24,6 +25,7 @@ interface SidebarProps {
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+  { name: 'Prospects', href: '/dashboard/prospects', icon: Target },
   { name: 'Contacts', href: '/dashboard/contacts', icon: Users },
   { name: 'Team Network', href: '/dashboard/team', icon: UsersRound },
   { name: 'Import', href: '/dashboard/import', icon: Upload },
