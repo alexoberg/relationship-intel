@@ -1,0 +1,189 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { inngest } from '@/lib/inngest';
+import seedData from '@/data/helix-prospects-seed.json';
+
+// GET /api/prospects - List prospects for team
+export async function GET(request: NextRequest) {
+  const supabase = await createClient();
+  
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Get user's team
+  const { data: membership } = await supabase
+    .from('team_members')
+    .select('team_id')
+    .eq('user_id', user.id)
+    .single();
+
+  if (!membership) {
+    return NextResponse.json({ error: 'No team found' }, { status: 404 });
+  }
+
+  // Get prospects with optional filters
+  const searchParams = request.nextUrl.searchParams;
+  const status = searchParams.get('status');
+  const minScore = searchParams.get('min_score');
+  const hasWarmIntro = searchParams.get('has_warm_intro');
+
+  let query = supabase
+    .from('prospects')
+    .select(`
+      *,
+      prospect_connections (
+        target_name,
+        target_title,
+        target_email,
+        connector_name,
+        connection_strength,
+        shared_context
+      )
+    `)
+    .eq('team_id', membership.team_id)
+    .order('priority_score', { ascending: false });
+
+  if (status) query = query.eq('status', status);
+  if (minScore) query = query.gte('priority_score', parseInt(minScore));
+  if (hasWarmIntro === 'true') query = query.eq('has_warm_intro', true);
+
+  const { data, error } = await query.limit(100);
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ prospects: data });
+}
+
+// POST /api/prospects - Import prospects or trigger sync
+export async function POST(request: NextRequest) {
+  const supabase = await createClient();
+  
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const { data: membership } = await supabase
+    .from('team_members')
+    .select('team_id')
+    .eq('user_id', user.id)
+    .single();
+
+  if (!membership) {
+    return NextResponse.json({ error: 'No team found' }, { status: 404 });
+  }
+
+  const body = await request.json();
+  const { action, prospects: customProspects } = body;
+
+  // Action: import seed data
+  if (action === 'import-seed') {
+    await inngest.send({
+      name: 'prospects/import',
+      data: {
+        teamId: membership.team_id,
+        prospects: seedData.prospects,
+        source: 'seed',
+      },
+    });
+
+    return NextResponse.json({ 
+      message: 'Import started',
+      count: seedData.prospects.length,
+    });
+  }
+
+  // Action: import custom prospects
+  if (action === 'import' && customProspects) {
+    await inngest.send({
+      name: 'prospects/import',
+      data: {
+        teamId: membership.team_id,
+        prospects: customProspects,
+        source: 'manual',
+      },
+    });
+
+    return NextResponse.json({ 
+      message: 'Import started',
+      count: customProspects.length,
+    });
+  }
+
+  // Action: sync all prospects with Swarm
+  if (action === 'sync-swarm') {
+    await inngest.send({
+      name: 'prospects/sync-connections',
+      data: { teamId: membership.team_id },
+    });
+
+    return NextResponse.json({ message: 'Swarm sync started' });
+  }
+
+  // Action: run full pipeline on specific prospect
+  if (action === 'run-pipeline' && body.prospectId) {
+    await inngest.send({
+      name: 'prospects/run-pipeline',
+      data: { prospectId: body.prospectId },
+    });
+
+    return NextResponse.json({ message: 'Pipeline started', prospectId: body.prospectId });
+  }
+
+  return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
+}
+
+// PATCH /api/prospects - Update prospect (feedback, status)
+export async function PATCH(request: NextRequest) {
+  const supabase = await createClient();
+  
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const body = await request.json();
+  const { prospectId, status, is_good_fit, feedback_notes } = body;
+
+  if (!prospectId) {
+    return NextResponse.json({ error: 'prospectId required' }, { status: 400 });
+  }
+
+  const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  
+  if (status) updates.status = status;
+  if (is_good_fit !== undefined) {
+    updates.is_good_fit = is_good_fit;
+    updates.feedback_by = user.id;
+    updates.feedback_at = new Date().toISOString();
+  }
+  if (feedback_notes) updates.feedback_notes = feedback_notes;
+
+  const { data, error } = await supabase
+    .from('prospects')
+    .update(updates)
+    .eq('id', prospectId)
+    .select()
+    .single();
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  // Log the activity
+  const adminClient = createAdminClient();
+  await adminClient.rpc('log_prospect_activity', {
+    p_prospect_id: prospectId,
+    p_user_id: user.id,
+    p_activity_type: is_good_fit !== undefined ? 'feedback_given' : 'status_change',
+    p_activity_data: updates,
+    p_notes: feedback_notes,
+  });
+
+  return NextResponse.json({ prospect: data });
+}

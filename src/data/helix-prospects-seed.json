@@ -1,0 +1,39 @@
+{
+  "metadata": {
+    "created": "2026-02-01",
+    "source": "Market research - AV100 + vertical analysis",
+    "description": "Initial Helix prospect list - Seed/Series A prioritized"
+  },
+  "prospects": [
+    {"company_name": "Tixr", "company_domain": "tixr.com", "company_industry": "Ticketing", "funding_stage": "series_a"},
+    {"company_name": "VenuePilot", "company_domain": "venuepilot.co", "company_industry": "Ticketing", "funding_stage": "seed"},
+    {"company_name": "Humanitix", "company_domain": "humanitix.com", "company_industry": "Ticketing", "funding_stage": "series_a"},
+    {"company_name": "Kicks Crew", "company_domain": "kickscrew.com", "company_industry": "Sneaker/E-commerce", "funding_stage": "series_a"},
+    {"company_name": "Fizz", "company_domain": "fizzsocial.app", "company_industry": "Social Network", "funding_stage": "series_a"},
+    {"company_name": "Lapse", "company_domain": "lapse.com", "company_industry": "Social Network", "funding_stage": "seed"},
+    {"company_name": "Sitch", "company_domain": "sitch.app", "company_industry": "Dating", "funding_stage": "seed"},
+    {"company_name": "222", "company_domain": "222.place", "company_industry": "Social/Dating", "funding_stage": "seed"},
+    {"company_name": "Claim", "company_domain": "claim.co", "company_industry": "Social Commerce", "funding_stage": "series_a"},
+    {"company_name": "Gowalla", "company_domain": "gowalla.com", "company_industry": "Social Network", "funding_stage": "seed"},
+    {"company_name": "RIVRS", "company_domain": "rivrs.io", "company_industry": "Gaming/UGC", "funding_stage": "seed"},
+    {"company_name": "Liminal", "company_domain": "liminal.gg", "company_industry": "Gaming/UGC", "funding_stage": "seed"},
+    {"company_name": "LegionFarm", "company_domain": "legionfarm.com", "company_industry": "Gaming", "funding_stage": "series_a"},
+    {"company_name": "SpruceID", "company_domain": "spruceid.com", "company_industry": "Identity/Web3", "funding_stage": "seed"},
+    {"company_name": "Bluesky", "company_domain": "bsky.app", "company_industry": "Social Network", "funding_stage": "series_a"},
+    {"company_name": "Consensus", "company_domain": "consensus.app", "company_industry": "AI/Search", "funding_stage": "series_a"},
+    {"company_name": "Together AI", "company_domain": "together.ai", "company_industry": "AI Infrastructure", "funding_stage": "series_a"},
+    {"company_name": "Method Financial", "company_domain": "methodfi.com", "company_industry": "Fintech", "funding_stage": "series_a"},
+    {"company_name": "Tabs", "company_domain": "tabs.inc", "company_industry": "Fintech/B2B", "funding_stage": "series_a"},
+    {"company_name": "Pragma", "company_domain": "pragma.gg", "company_industry": "Gaming Infrastructure", "funding_stage": "series_a"},
+    {"company_name": "Radix Health", "company_domain": "radixhealth.com", "company_industry": "Healthcare", "funding_stage": "series_a"},
+    {"company_name": "Kapital", "company_domain": "kapital.mx", "company_industry": "Fintech/Neobank", "funding_stage": "series_a"},
+    {"company_name": "Sleeper", "company_domain": "sleeper.com", "company_industry": "Fantasy Sports", "funding_stage": "series_c"},
+    {"company_name": "Wander", "company_domain": "wander.com", "company_industry": "Travel/Rentals", "funding_stage": "series_b"},
+    {"company_name": "KarmaCheck", "company_domain": "karmacheck.com", "company_industry": "HR Tech", "funding_stage": "series_b"},
+    {"company_name": "Boundless", "company_domain": "boundless.com", "company_industry": "Immigration", "funding_stage": "series_b"},
+    {"company_name": "Tilled", "company_domain": "tilled.com", "company_industry": "Fintech/PayFac", "funding_stage": "series_b"},
+    {"company_name": "Teamshares", "company_domain": "teamshares.com", "company_industry": "Fintech", "funding_stage": "series_b"},
+    {"company_name": "TRM Labs", "company_domain": "trmlabs.com", "company_industry": "Crypto/Compliance", "funding_stage": "series_b"},
+    {"company_name": "RapidSOS", "company_domain": "rapidsos.com", "company_industry": "Emergency/Safety", "funding_stage": "series_c"}
+  ]
+}
