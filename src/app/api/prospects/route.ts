@@ -59,6 +59,47 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ prospects: data });
 }
 
+// Helper: Get or create team for user
+async function getOrCreateTeam(supabase: Awaited<ReturnType<typeof createClient>>, userId: string) {
+  // Check for existing membership
+  const { data: membership } = await supabase
+    .from('team_members')
+    .select('team_id')
+    .eq('user_id', userId)
+    .single();
+
+  if (membership) {
+    return membership.team_id;
+  }
+
+  // No team - create one using admin client
+  const adminClient = createAdminClient();
+  
+  // Create team
+  const { data: team, error: teamError } = await adminClient
+    .from('teams')
+    .insert({ name: 'My Team', created_by: userId })
+    .select()
+    .single();
+
+  if (teamError) {
+    console.error('Failed to create team:', teamError);
+    return null;
+  }
+
+  // Add user as admin
+  const { error: memberError } = await adminClient
+    .from('team_members')
+    .insert({ team_id: team.id, user_id: userId, role: 'admin' });
+
+  if (memberError) {
+    console.error('Failed to add team member:', memberError);
+    return null;
+  }
+
+  return team.id;
+}
+
 // POST /api/prospects - Import prospects or trigger sync
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
@@ -68,14 +109,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { data: membership } = await supabase
-    .from('team_members')
-    .select('team_id')
-    .eq('user_id', user.id)
-    .single();
-
-  if (!membership) {
-    return NextResponse.json({ error: 'No team found' }, { status: 404 });
+  const teamId = await getOrCreateTeam(supabase, user.id);
+  if (!teamId) {
+    return NextResponse.json({ error: 'Failed to get or create team' }, { status: 500 });
   }
 
   const body = await request.json();
@@ -86,7 +122,7 @@ export async function POST(request: NextRequest) {
     await inngest.send({
       name: 'prospects/import',
       data: {
-        teamId: membership.team_id,
+        teamId: teamId,
         prospects: seedData.prospects,
         source: 'seed',
       },
@@ -103,7 +139,7 @@ export async function POST(request: NextRequest) {
     await inngest.send({
       name: 'prospects/import',
       data: {
-        teamId: membership.team_id,
+        teamId: teamId,
         prospects: customProspects,
         source: 'manual',
       },
@@ -119,7 +155,7 @@ export async function POST(request: NextRequest) {
   if (action === 'sync-swarm') {
     await inngest.send({
       name: 'prospects/sync-connections',
-      data: { teamId: membership.team_id },
+      data: { teamId: teamId },
     });
 
     return NextResponse.json({ message: 'Swarm sync started' });
