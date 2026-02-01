@@ -192,7 +192,7 @@ export default function ProspectsPage() {
       const response = await fetch('/api/prospects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'import' }),
+        body: JSON.stringify({ action: 'import-seed' }),
       });
       if (response.ok) {
         await loadProspects();
@@ -209,7 +209,7 @@ export default function ProspectsPage() {
       const response = await fetch('/api/prospects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'sync' }),
+        body: JSON.stringify({ action: 'sync-swarm' }),
       });
       if (response.ok) {
         await loadProspects();
