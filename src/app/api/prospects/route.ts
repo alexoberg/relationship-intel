@@ -117,20 +117,44 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   const { action, prospects: customProspects } = body;
 
-  // Action: import seed data
+  // Action: import seed data (synchronous for reliability)
   if (action === 'import-seed') {
-    await inngest.send({
-      name: 'prospects/import',
-      data: {
-        teamId: teamId,
-        prospects: seedData.prospects,
-        source: 'seed',
-      },
-    });
+    const adminClient = createAdminClient();
+    const inserted: string[] = [];
+    const errors: string[] = [];
 
-    return NextResponse.json({ 
-      message: 'Import started',
-      count: seedData.prospects.length,
+    for (const prospect of seedData.prospects) {
+      try {
+        const { data, error } = await adminClient
+          .from('prospects')
+          .upsert({
+            team_id: teamId,
+            company_name: prospect.company_name,
+            company_domain: prospect.company_domain,
+            company_industry: prospect.company_industry,
+            funding_stage: prospect.funding_stage,
+            source: 'seed',
+          }, {
+            onConflict: 'team_id,company_domain',
+          })
+          .select()
+          .single();
+
+        if (error) {
+          errors.push(`${prospect.company_domain}: ${error.message}`);
+        } else if (data) {
+          inserted.push(data.id);
+        }
+      } catch (err) {
+        errors.push(`${prospect.company_domain}: ${err}`);
+      }
+    }
+
+    return NextResponse.json({
+      message: 'Import completed',
+      imported: inserted.length,
+      errors: errors.length,
+      errorDetails: errors.slice(0, 5),
     });
   }
 
