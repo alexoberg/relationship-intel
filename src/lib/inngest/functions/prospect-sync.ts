@@ -1,54 +1,44 @@
 import { inngest } from '../client';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { findConnectionPaths, searchByCompanyAndTitle, testSwarmConnection } from '@/lib/swarm';
+import { runProspectMatching } from '@/lib/prospect-matching';
 import { detectHelixProductFit, CompanyProfile } from '@/lib/helix-sales';
 import { enrichByLinkedIn, enrichByNameAndCompany } from '@/lib/pdl';
 
 const DEFAULT_BATCH_SIZE = 20;
-const RATE_LIMIT_DELAY_MS = 250;
 
 /**
- * Sync prospects with The Swarm to find connection paths
- * Updates connection_score, best_connector, and caches all paths
+ * Match prospects to our contacts (OUR logic, not Swarm)
+ * Finds contacts we know at prospect companies and calculates connection scores
  */
-export const syncProspectConnections = inngest.createFunction(
+export const matchProspectConnections = inngest.createFunction(
   {
-    id: 'sync-prospect-connections',
-    name: 'Sync Prospect Connections with The Swarm',
+    id: 'match-prospect-connections',
+    name: 'Match Prospects to Contacts',
     concurrency: {
       limit: 1,
       key: 'event.data.teamId',
     },
     retries: 2,
   },
-  { event: 'prospects/sync-connections' },
+  { event: 'prospects/match-connections' },
   async ({ event, step }) => {
     const { teamId, prospectIds, batchSize = DEFAULT_BATCH_SIZE } = event.data;
     const supabase = createAdminClient();
 
-    // Step 1: Verify Swarm connection
-    const swarmStatus = await step.run('verify-swarm-connection', async () => {
-      return await testSwarmConnection();
-    });
-
-    if (!swarmStatus.connected) {
-      throw new Error(`Swarm API not available: ${swarmStatus.error}`);
-    }
-
-    // Step 2: Get prospects to sync
+    // Step 1: Get prospects to match
     const prospects = await step.run('get-prospects', async () => {
       let query = supabase
         .from('prospects')
-        .select('*')
+        .select('id')
         .eq('team_id', teamId);
 
       if (prospectIds && prospectIds.length > 0) {
         query = query.in('id', prospectIds);
       } else {
-        // Get prospects that haven't been synced recently (or never)
+        // Get prospects that haven't been matched recently
         const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
         query = query
-          .or(`last_swarm_sync.is.null,last_swarm_sync.lt.${oneDayAgo}`)
+          .or(`matched_at.is.null,matched_at.lt.${oneDayAgo}`)
           .order('priority_score', { ascending: false })
           .limit(batchSize);
       }
@@ -59,124 +49,51 @@ export const syncProspectConnections = inngest.createFunction(
     });
 
     if (prospects.length === 0) {
-      return { status: 'no_prospects', message: 'No prospects to sync' };
+      return { status: 'no_prospects', message: 'No prospects to match' };
     }
 
-    // Step 3: Process each prospect
-    const results = await step.run('sync-prospects', async () => {
-      const syncResults: Array<{
-        prospectId: string;
-        company: string;
-        connectionsFound: number;
-        bestScore: number;
-        error?: string;
-      }> = [];
-
-      for (const prospect of prospects) {
-        try {
-          // Find connection paths using Swarm
-          const paths = await findConnectionPaths(
-            prospect.company_domain,
-            prospect.helix_target_titles || undefined
-          );
-
-          // Calculate connection score
-          let connectionScore = 0;
-          let hasWarmIntro = false;
-          let bestConnector: string | null = null;
-          let connectionType: string | null = null;
-          let connectionContext: string | null = null;
-
-          if (paths.length > 0) {
-            const avgStrength = paths.reduce((sum, p) => sum + p.strength, 0) / paths.length;
-            const pathBonus = Math.min(paths.length * 5, 30);
-            connectionScore = Math.round(avgStrength * 70 + pathBonus);
-            hasWarmIntro = paths.some(p => p.strength >= 0.7);
-
-            // Best path info
-            const best = paths[0];
-            bestConnector = best.connector;
-            connectionType = best.connection_type;
-            connectionContext = best.shared_context;
-          }
-
-          // Update prospect
-          await supabase
-            .from('prospects')
-            .update({
-              connection_score: connectionScore,
-              has_warm_intro: hasWarmIntro,
-              best_connector: bestConnector,
-              connection_type: connectionType,
-              connection_context: connectionContext,
-              connections_count: paths.length,
-              last_swarm_sync: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', prospect.id);
-
-          // Store all connection paths
-          if (paths.length > 0) {
-            // Delete old paths first
-            await supabase
-              .from('prospect_connections')
-              .delete()
-              .eq('prospect_id', prospect.id);
-
-            // Insert new paths
-            const connectionRecords = paths.slice(0, 10).map(path => ({
-              prospect_id: prospect.id,
-              target_name: path.target_person.full_name,
-              target_title: path.target_person.current_title,
-              target_linkedin_url: path.target_person.linkedin_url,
-              connector_name: path.connector,
-              connection_type: path.connection_type,
-              connection_strength: path.strength,
-              shared_context: path.shared_context,
-            }));
-
-            await supabase.from('prospect_connections').insert(connectionRecords);
-          }
-
-          syncResults.push({
-            prospectId: prospect.id,
-            company: prospect.company_name,
-            connectionsFound: paths.length,
-            bestScore: connectionScore,
-          });
-
-          // Rate limit
-          await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY_MS));
-        } catch (error) {
-          syncResults.push({
-            prospectId: prospect.id,
-            company: prospect.company_name,
-            connectionsFound: 0,
-            bestScore: 0,
-            error: error instanceof Error ? error.message : 'Unknown error',
-          });
-        }
-      }
-
-      return syncResults;
+    // Step 2: Run matching
+    const result = await step.run('match-prospects', async () => {
+      return await runProspectMatching(teamId, {
+        prospectIds: prospects.map(p => p.id),
+      });
     });
 
-    // Step 4: Log activity
+    // Step 3: Log activity
     await step.run('log-activity', async () => {
-      const successCount = results.filter(r => !r.error).length;
-      const totalConnections = results.reduce((sum, r) => sum + r.connectionsFound, 0);
-
-      // Could log to a team activity table here
-      console.log(`Synced ${successCount}/${results.length} prospects, found ${totalConnections} connections`);
+      console.log(`Matched ${result.matched}/${result.processed} prospects to contacts`);
     });
 
     return {
       status: 'completed',
-      processed: results.length,
-      successful: results.filter(r => !r.error).length,
-      totalConnections: results.reduce((sum, r) => sum + r.connectionsFound, 0),
-      results,
+      processed: result.processed,
+      matched: result.matched,
+      errors: result.errors.length,
     };
+  }
+);
+
+// Keep backward compatibility - alias old event to new function
+export const syncProspectConnections = inngest.createFunction(
+  {
+    id: 'sync-prospect-connections',
+    name: 'Sync Prospect Connections (Legacy)',
+    concurrency: {
+      limit: 1,
+      key: 'event.data.teamId',
+    },
+  },
+  { event: 'prospects/sync-connections' },
+  async ({ event, step }) => {
+    // Forward to the new matching function
+    await step.run('forward-to-matching', async () => {
+      await inngest.send({
+        name: 'prospects/match-connections',
+        data: event.data,
+      });
+    });
+
+    return { status: 'forwarded_to_matching' };
   }
 );
 
@@ -244,7 +161,7 @@ export const scoreHelixFit = inngest.createFunction(
 
     return {
       prospectId,
-      company: prospect.company_name,
+      company: prospect.name,
       helixProducts: result.products.map(p => p.product),
       fitScore: result.bestFit ? Math.round(result.bestFit.confidence * 100) : 0,
       targetTitles: result.allTargetTitles,
@@ -463,7 +380,7 @@ export const enrichProspectContacts = inngest.createFunction(
     return {
       status: 'completed',
       prospectId,
-      company: prospect.company_name,
+      company: prospect.name,
       enriched: enrichmentResults.filter(r => r.enriched).length,
       total: enrichmentResults.length,
       results: enrichmentResults,
@@ -491,7 +408,7 @@ export const runProspectPipeline = inngest.createFunction(
       data: { prospectId },
     });
 
-    // Step 2: Sync Swarm connections
+    // Step 2: Match to contacts (our logic)
     const supabase = createAdminClient();
     const { data: prospect } = await step.run('get-prospect', async () => {
       return await supabase
@@ -502,8 +419,8 @@ export const runProspectPipeline = inngest.createFunction(
     });
 
     if (prospect) {
-      await step.invoke('sync-connections', {
-        function: syncProspectConnections,
+      await step.invoke('match-connections', {
+        function: matchProspectConnections,
         data: { teamId: prospect.team_id, prospectIds: [prospectId] },
       });
     }
@@ -520,7 +437,8 @@ export const runProspectPipeline = inngest.createFunction(
 
 // Export all functions
 export const functions = [
-  syncProspectConnections,
+  matchProspectConnections,
+  syncProspectConnections, // Legacy, forwards to matchProspectConnections
   scoreHelixFit,
   importProspects,
   enrichProspectContacts,

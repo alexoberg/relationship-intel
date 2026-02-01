@@ -76,7 +76,7 @@ export interface ConnectionPath {
 async function swarmRequest<T>(
   endpoint: string,
   body: Record<string, unknown>
-): Promise<{ success: boolean; data?: T; error?: string }> {
+): Promise<{ success: boolean; data?: T; error?: string; rawResponse?: unknown }> {
   const apiKey = process.env.SWARM_API_KEY;
 
   if (!apiKey) {
@@ -84,6 +84,8 @@ async function swarmRequest<T>(
   }
 
   try {
+    console.log(`[Swarm] POST ${SWARM_API_BASE}${endpoint}`, JSON.stringify(body).slice(0, 200));
+
     const response = await fetch(`${SWARM_API_BASE}${endpoint}`, {
       method: 'POST',
       headers: {
@@ -93,22 +95,113 @@ async function swarmRequest<T>(
       body: JSON.stringify(body),
     });
 
+    const rawText = await response.text();
+    console.log(`[Swarm] Response ${response.status}: ${rawText.slice(0, 500)}`);
+
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
+      let errorData = {};
+      try { errorData = JSON.parse(rawText); } catch {}
       return {
         success: false,
-        error: `Swarm API error: ${response.status} - ${errorData.message || 'Unknown error'}`,
+        error: `Swarm API error: ${response.status} - ${(errorData as { message?: string }).message || rawText.slice(0, 200)}`,
       };
     }
 
-    const data = await response.json();
-    return { success: true, data };
+    const data = JSON.parse(rawText);
+    return { success: true, data, rawResponse: data };
   } catch (error) {
     return {
       success: false,
       error: `Swarm request failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
     };
   }
+}
+
+// ============================================
+// RESPONSE PARSING
+// ============================================
+
+// Swarm API response types
+interface SwarmNetworkMapperItem {
+  profile: {
+    id: string;
+    full_name: string;
+    current_title?: string;
+    linkedin_url?: string;
+    work_email?: string;
+    current_company_name?: string;
+    current_company_website?: string;
+  };
+  connections: Array<{
+    connector_id: string;
+    connector_name: string;
+    connector_linkedin_url?: string;
+    connector_current_title?: string;
+    connector_current_company_name?: string;
+    connection_strength: number;
+    connection_strength_normalized: number;
+    sources: Array<{
+      origin: string;
+      shared_company?: string;
+      shared_company_website?: string;
+      overlap_start_date?: string;
+      overlap_end_date?: string;
+      overlap_duration_months?: number;
+    }>;
+  }>;
+}
+
+interface SwarmNetworkMapperResponse {
+  items: SwarmNetworkMapperItem[];
+  count: number;
+  total_count: number;
+}
+
+function parseSwarmResponse(result: { success: boolean; data?: unknown; error?: string }): SwarmSearchResult {
+  if (!result.success) {
+    return { success: false, connections: [], total_count: 0, error: result.error };
+  }
+
+  const data = result.data as SwarmNetworkMapperResponse;
+
+  if (!data?.items || !Array.isArray(data.items)) {
+    console.log('[Swarm] No items array in response');
+    return { success: true, connections: [], total_count: 0 };
+  }
+
+  // Transform Swarm network-mapper response to our SwarmConnection format
+  const connections: SwarmConnection[] = data.items.flatMap(item => {
+    return item.connections.map(conn => ({
+      profile_id: item.profile.id,
+      profile_info: {
+        full_name: item.profile.full_name,
+        first_name: item.profile.full_name.split(' ')[0],
+        last_name: item.profile.full_name.split(' ').slice(1).join(' '),
+        linkedin_url: item.profile.linkedin_url,
+        current_title: item.profile.current_title,
+        current_company: item.profile.current_company_name,
+        current_company_website: item.profile.current_company_website,
+      },
+      team_member_id: conn.connector_id,
+      team_member_name: conn.connector_name,
+      connection_strength: conn.connection_strength,
+      sources: conn.sources.map(src => ({
+        origin: src.origin as SwarmConnectionSource['origin'],
+        company_name: src.shared_company,
+        company_domain: src.shared_company_website,
+        overlap_start: src.overlap_start_date,
+        overlap_end: src.overlap_end_date,
+      })),
+    }));
+  });
+
+  console.log(`[Swarm] Parsed ${connections.length} connections from ${data.items.length} profiles`);
+
+  return {
+    success: true,
+    connections,
+    total_count: data.total_count || connections.length,
+  };
 }
 
 // ============================================
@@ -119,31 +212,38 @@ async function swarmRequest<T>(
  * Search for connections at a specific company by domain
  */
 export async function searchByCompany(domain: string): Promise<SwarmSearchResult> {
-  const result = await swarmRequest<{ hits: { hits: Array<{ _source: SwarmConnection }> }; total: number }>(
+  // Clean domain and extract company name hint
+  // e.g., "livenationentertainment.com" -> "livenation entertainment"
+  // e.g., "ticketmaster.com" -> "ticketmaster"
+  let searchTerm = domain.toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .replace(/\.com$|\.io$|\.co$|\.ai$|\.org$|\.net$/, '')
+    .replace(/entertainment$/, '') // Remove common suffixes
+    .replace(/inc$|corp$|llc$/, '')
+    .trim();
+
+  // Add spaces between camelCase or known compound words
+  searchTerm = searchTerm
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/livenation/, 'live nation')
+    .replace(/ticketmaster/, 'ticketmaster');
+
+  console.log(`[Swarm] Searching for company: "${searchTerm}" (from domain: ${domain})`);
+
+  const result = await swarmRequest<unknown>(
     '/profiles/network-mapper',
     {
       query: {
-        term: {
-          'profile_info.current_company_website': {
-            value: domain.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, ''),
-          },
+        query_string: {
+          query: searchTerm,
         },
       },
-      size: 100,
+      size: 50,
     }
   );
 
-  if (!result.success) {
-    return { success: false, connections: [], total_count: 0, error: result.error };
-  }
-
-  const connections = result.data?.hits?.hits?.map(hit => hit._source) || [];
-  
-  return {
-    success: true,
-    connections,
-    total_count: result.data?.total || connections.length,
-  };
+  return parseSwarmResponse(result);
 }
 
 /**
@@ -153,48 +253,24 @@ export async function searchByCompanyAndTitle(
   domain: string,
   titleKeywords: string[]
 ): Promise<SwarmSearchResult> {
-  const titleShould = titleKeywords.map(keyword => ({
-    match: {
-      'profile_info.current_title': {
-        query: keyword,
-        fuzziness: 'AUTO',
-      },
-    },
-  }));
+  // Clean domain and build search query with company + titles
+  const cleanDomain = domain.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\.com$|\.io$|\.co$|\.ai$/, '');
+  const titlesQuery = titleKeywords.join(' OR ');
+  const searchQuery = `${cleanDomain} AND (${titlesQuery})`;
 
-  const result = await swarmRequest<{ hits: { hits: Array<{ _source: SwarmConnection }> }; total: number }>(
+  const result = await swarmRequest<unknown>(
     '/profiles/network-mapper',
     {
       query: {
-        bool: {
-          must: [
-            {
-              term: {
-                'profile_info.current_company_website': {
-                  value: domain.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, ''),
-                },
-              },
-            },
-          ],
-          should: titleShould,
-          minimum_should_match: 1,
+        query_string: {
+          query: searchQuery,
         },
       },
-      size: 100,
+      size: 50,
     }
   );
 
-  if (!result.success) {
-    return { success: false, connections: [], total_count: 0, error: result.error };
-  }
-
-  const connections = result.data?.hits?.hits?.map(hit => hit._source) || [];
-  
-  return {
-    success: true,
-    connections,
-    total_count: result.data?.total || connections.length,
-  };
+  return parseSwarmResponse(result);
 }
 
 /**
@@ -207,7 +283,7 @@ export async function searchPerson(
   const must: Array<Record<string, unknown>> = [
     {
       match: {
-        'profile_info.full_name': {
+        'full_name': {
           query: name,
           fuzziness: 'AUTO',
         },
@@ -218,7 +294,7 @@ export async function searchPerson(
   if (company) {
     must.push({
       match: {
-        'profile_info.current_company': {
+        'current_company_name': {
           query: company,
           fuzziness: 'AUTO',
         },
@@ -226,7 +302,7 @@ export async function searchPerson(
     });
   }
 
-  const result = await swarmRequest<{ hits: { hits: Array<{ _source: SwarmConnection }> }; total: number }>(
+  const result = await swarmRequest<unknown>(
     '/profiles/network-mapper',
     {
       query: {
@@ -236,55 +312,36 @@ export async function searchPerson(
     }
   );
 
-  if (!result.success) {
-    return { success: false, connections: [], total_count: 0, error: result.error };
-  }
-
-  const connections = result.data?.hits?.hits?.map(hit => hit._source) || [];
-  
-  return {
-    success: true,
-    connections,
-    total_count: result.data?.total || connections.length,
-  };
+  return parseSwarmResponse(result);
 }
 
 /**
  * Search by LinkedIn URL
  */
 export async function searchByLinkedIn(linkedinUrl: string): Promise<SwarmSearchResult> {
-  // Normalize LinkedIn URL
+  // Normalize LinkedIn URL - extract the profile slug
   const cleanUrl = linkedinUrl
     .toLowerCase()
     .replace(/^https?:\/\//, '')
     .replace(/^www\./, '')
     .replace(/\/$/, '');
 
-  const result = await swarmRequest<{ hits: { hits: Array<{ _source: SwarmConnection }> }; total: number }>(
+  const result = await swarmRequest<unknown>(
     '/profiles/network-mapper',
     {
       query: {
-        term: {
-          'profile_info.linkedin_url': {
-            value: cleanUrl,
-          },
+        bool: {
+          should: [
+            { wildcard: { 'linkedin_url': `*${cleanUrl}*` } },
+          ],
+          minimum_should_match: 1,
         },
       },
       size: 10,
     }
   );
 
-  if (!result.success) {
-    return { success: false, connections: [], total_count: 0, error: result.error };
-  }
-
-  const connections = result.data?.hits?.hits?.map(hit => hit._source) || [];
-  
-  return {
-    success: true,
-    connections,
-    total_count: result.data?.total || connections.length,
-  };
+  return parseSwarmResponse(result);
 }
 
 // ============================================
