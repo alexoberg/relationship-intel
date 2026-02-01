@@ -2,10 +2,12 @@
 // SWARM CONTACT INGESTION
 // ============================================
 // Pulls contacts from The Swarm network into our contacts table
-// This is separate from prospect matching (which we do ourselves)
+// Uses unified ingestion service for deduplication and merging
 // ============================================
 
 import { createAdminClient } from '@/lib/supabase/admin';
+import { ingestContacts, swarmItemToRawContact } from '@/lib/ingestion';
+import { updateProximityScorePass1 } from '@/lib/scoring';
 
 const SWARM_API_BASE = 'https://bee.theswarm.com/v2';
 
@@ -266,7 +268,69 @@ export async function ingestSwarmContacts(
   result.success = result.errors.length === 0;
   console.log(`[Swarm Ingestion] Complete: ${result.contactsIngested} new, ${result.contactsUpdated} updated, ${result.connectionsSaved} connections`);
 
+  // Update proximity scores for all ingested/updated contacts (Pass 1)
+  if (result.contactsIngested > 0 || result.contactsUpdated > 0) {
+    try {
+      const { data: contacts } = await supabase
+        .from('contacts')
+        .select('id')
+        .eq('team_id', teamId)
+        .not('swarm_profile_id', 'is', null)
+        .limit(500); // Process in batches
+
+      for (const contact of contacts || []) {
+        await updateProximityScorePass1(supabase, contact.id);
+      }
+      console.log(`[Swarm Ingestion] Updated proximity scores for ${contacts?.length || 0} contacts`);
+    } catch (err) {
+      console.error('[Swarm Ingestion] Failed to update proximity scores:', err);
+    }
+  }
+
   return result;
+}
+
+/**
+ * Ingest Swarm contacts using unified ingestion service
+ * Alternative to ingestSwarmContacts that uses the shared merge/dedup logic
+ */
+export async function ingestSwarmContactsUnified(
+  teamId: string,
+  ownerId: string,
+  options?: { maxContacts?: number }
+): Promise<{ success: boolean; inserted: number; updated: number; merged: number; errors: number }> {
+  const supabase = createAdminClient();
+  const maxContacts = options?.maxContacts || 10000;
+  const batchSize = 50;
+
+  let offset = 0;
+  let totalResult = { success: true, inserted: 0, updated: 0, merged: 0, errors: 0 };
+
+  while (offset < maxContacts) {
+    const fetchResult = await fetchSwarmNetwork(batchSize, offset);
+    if (!fetchResult.success || !fetchResult.data?.items?.length) break;
+
+    const rawContacts = fetchResult.data.items.map(swarmItemToRawContact);
+
+    const result = await ingestContacts(supabase, rawContacts, {
+      teamId,
+      ownerId,
+      requireIdentifier: false,
+    });
+
+    totalResult.inserted += result.inserted;
+    totalResult.updated += result.updated;
+    totalResult.merged += result.merged;
+    totalResult.errors += result.errors;
+
+    offset += fetchResult.data.items.length;
+    console.log(`[Swarm Unified] Processed ${offset}/${fetchResult.data.total_count}`);
+
+    await new Promise(r => setTimeout(r, 200));
+  }
+
+  totalResult.success = totalResult.errors === 0;
+  return totalResult;
 }
 
 /**

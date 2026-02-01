@@ -1,16 +1,16 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import {
   buildCategorizationPrompt,
   parseAICategorizationResponse,
   categorizeByRules,
-  CategorizationResult,
 } from '@/lib/categorization';
 import {
   detectHelixProductFit,
   isHelixTargetContact,
   CompanyProfile,
 } from '@/lib/helix-sales';
+import { success, errors, withErrorHandling } from '@/lib/api';
 import Anthropic from '@anthropic-ai/sdk';
 
 // Lazy initialization to avoid build-time errors when API key is not set
@@ -36,42 +36,45 @@ function buildCompanyProfile(contact: {
     name: contact.current_company || 'Unknown',
     domain: contact.company_domain || '',
     industry: contact.current_company_industry,
-    hasUserAccounts: true, // Default assumption for B2C
-    hasAgeRestrictedContent: industry.includes('gaming') ||
-                              industry.includes('adult') ||
-                              industry.includes('gambling'),
-    isTicketingPlatform: industry.includes('ticketing') ||
-                          industry.includes('events') ||
-                          industry.includes('entertainment'),
-    isMarketplace: industry.includes('marketplace') ||
-                   industry.includes('e-commerce'),
-    isSocialPlatform: industry.includes('social') ||
-                       industry.includes('community'),
-    isGamingPlatform: industry.includes('gaming') ||
-                       industry.includes('video games'),
+    hasUserAccounts: true,
+    hasAgeRestrictedContent:
+      industry.includes('gaming') || industry.includes('adult') || industry.includes('gambling'),
+    isTicketingPlatform:
+      industry.includes('ticketing') ||
+      industry.includes('events') ||
+      industry.includes('entertainment'),
+    isMarketplace: industry.includes('marketplace') || industry.includes('e-commerce'),
+    isSocialPlatform: industry.includes('social') || industry.includes('community'),
+    isGamingPlatform: industry.includes('gaming') || industry.includes('video games'),
   };
 }
 
+interface CategorizeData {
+  categorized: number;
+  breakdown: {
+    ruleBased: number;
+    helixSales: number;
+    ai: number;
+  };
+  errors: string[];
+}
+
 export async function POST(request: NextRequest) {
-  try {
+  return withErrorHandling(async () => {
     const { contactIds, useAIFallback = true } = await request.json();
 
     if (!contactIds || !Array.isArray(contactIds)) {
-      return NextResponse.json(
-        { success: false, error: 'contactIds array required' },
-        { status: 400 }
-      );
+      return errors.badRequest('contactIds array required');
     }
 
     const supabase = await createClient();
 
     // Get current user
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     if (!user) {
-      return NextResponse.json(
-        { success: false, error: 'Unauthorized' },
-        { status: 401 }
-      );
+      return errors.unauthorized();
     }
 
     // Fetch uncategorized contacts
@@ -83,22 +86,17 @@ export async function POST(request: NextRequest) {
       .eq('category', 'uncategorized');
 
     if (fetchError || !contacts) {
-      return NextResponse.json(
-        { success: false, error: fetchError?.message || 'Failed to fetch contacts' },
-        { status: 500 }
-      );
+      return errors.internal(fetchError?.message || 'Failed to fetch contacts');
     }
 
     // Fetch known firms for rule-based categorization
-    const { data: knownFirms } = await supabase
-      .from('known_firms')
-      .select('*');
+    const { data: knownFirms } = await supabase.from('known_firms').select('*');
 
     let categorizedCount = 0;
     let ruleBasedCount = 0;
     let helixSalesCount = 0;
     let aiCount = 0;
-    const errors: string[] = [];
+    const categorizeErrors: string[] = [];
 
     for (const contact of contacts) {
       try {
@@ -115,7 +113,6 @@ export async function POST(request: NextRequest) {
         const ruleResult = categorizeByRules(contact, workHistory || [], knownFirms || []);
 
         if (ruleResult.category !== 'uncategorized' && ruleResult.confidence >= 0.7) {
-          // Rule-based categorization successful
           await supabase
             .from('contacts')
             .update({
@@ -142,7 +139,6 @@ export async function POST(request: NextRequest) {
           const targetCheck = isHelixTargetContact(title, helixResult.products);
 
           if (targetCheck.isTarget) {
-            // Contact is a target persona at a Helix-fit company
             const bestProduct = helixResult.bestFit;
             await supabase
               .from('contacts')
@@ -165,7 +161,6 @@ export async function POST(request: NextRequest) {
         // STEP 3: Fall back to AI prediction (if enabled)
         // ============================================
         if (!useAIFallback) {
-          // Skip AI, leave as uncategorized
           continue;
         }
 
@@ -174,28 +169,24 @@ export async function POST(request: NextRequest) {
         const completion = await getAnthropic().messages.create({
           model: 'claude-sonnet-4-20250514',
           max_tokens: 200,
-          system: 'You are a contact categorization assistant. Analyze the contact information and categorize them accurately. Always respond with valid JSON only, no other text.',
-          messages: [
-            {
-              role: 'user',
-              content: prompt,
-            },
-          ],
+          system:
+            'You are a contact categorization assistant. Analyze the contact information and categorize them accurately. Always respond with valid JSON only, no other text.',
+          messages: [{ role: 'user', content: prompt }],
         });
 
-        const response = completion.content[0]?.type === 'text' ? completion.content[0].text : null;
+        const response =
+          completion.content[0]?.type === 'text' ? completion.content[0].text : null;
         if (!response) {
-          errors.push(`${contact.full_name}: No AI response`);
+          categorizeErrors.push(`${contact.full_name}: No AI response`);
           continue;
         }
 
         const categorization = parseAICategorizationResponse(response);
         if (!categorization) {
-          errors.push(`${contact.full_name}: Failed to parse AI response`);
+          categorizeErrors.push(`${contact.full_name}: Failed to parse AI response`);
           continue;
         }
 
-        // Update contact with AI categorization
         await supabase
           .from('contacts')
           .update({
@@ -209,7 +200,7 @@ export async function POST(request: NextRequest) {
         categorizedCount++;
         aiCount++;
       } catch (err) {
-        errors.push(
+        categorizeErrors.push(
           `${contact.full_name}: ${err instanceof Error ? err.message : 'Unknown error'}`
         );
       }
@@ -218,23 +209,14 @@ export async function POST(request: NextRequest) {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
 
-    return NextResponse.json({
-      success: true,
+    return success<CategorizeData>({
       categorized: categorizedCount,
       breakdown: {
         ruleBased: ruleBasedCount,
         helixSales: helixSalesCount,
         ai: aiCount,
       },
-      errors,
+      errors: categorizeErrors,
     });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      },
-      { status: 500 }
-    );
-  }
+  });
 }

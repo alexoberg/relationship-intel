@@ -1,7 +1,7 @@
 export type Category = 'vc' | 'angel' | 'sales_prospect' | 'irrelevant' | 'uncategorized';
 export type CategorySource = 'rules' | 'ai' | 'manual' | 'helix';
 export type HelixProduct = 'captcha_replacement' | 'voice_captcha' | 'age_verification';
-export type ContactSource = 'linkedin_csv' | 'gmail' | 'gcal' | 'manual';
+export type ContactSource = 'linkedin_csv' | 'gmail' | 'gcal' | 'manual' | 'swarm';
 export type EmailDirection = 'sent' | 'received';
 export type FirmType = 'vc' | 'angel_network' | 'pe' | 'accelerator';
 
@@ -85,6 +85,11 @@ export interface Contact {
   company_history_count: number;
   earliest_work_date: string | null;
   career_years: number | null;
+
+  // Swarm integration fields
+  swarm_profile_id: string | null;
+  connection_strength: number; // 0-100, from Swarm's connection_strength
+  swarm_synced_at: string | null;
 
   // Joined data
   work_history?: WorkHistory[];
