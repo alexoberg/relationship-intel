@@ -126,7 +126,7 @@ export async function ingestSwarmContacts(
   }
 ): Promise<IngestionResult> {
   const supabase = createAdminClient();
-  const batchSize = options?.batchSize || 100;
+  const batchSize = options?.batchSize || 50; // Swarm API caps at 50 per page
   const maxContacts = options?.maxContacts || 10000;
 
   const result: IngestionResult = {
@@ -257,7 +257,7 @@ export async function ingestSwarmContacts(
     }
 
     totalFetched += items.length;
-    offset += batchSize;
+    offset += items.length; // Use actual items received, not batchSize (API caps at 50)
 
     // Rate limit
     await new Promise(r => setTimeout(r, 250));
