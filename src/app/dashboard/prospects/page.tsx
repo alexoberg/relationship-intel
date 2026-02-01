@@ -28,7 +28,7 @@ import {
 interface Prospect {
   id: string;
   team_id: string;
-  name: string;  // DB uses 'name' not 'company_name'
+  name: string;
   company_domain: string;
   linkedin_url: string | null;
   stage_fit: number | null;
@@ -41,6 +41,15 @@ interface Prospect {
   is_good_fit: boolean | null;
   feedback_notes: string | null;
   created_at: string;
+  has_warm_intro?: boolean;
+  helix_fit_score?: number | null;
+  helix_fit_reason?: string | null;
+  helix_products?: string[] | null;
+  connections_count?: number;
+  best_connector?: string | null;
+  connection_context?: string | null;
+  funding_stage?: string | null;
+  total_funding?: number | null;
 }
 
 interface ProspectConnection {
@@ -361,7 +370,7 @@ export default function ProspectsPage() {
           <div className="p-6 border-b border-gray-100">
             <div className="flex items-start justify-between">
               <div>
-                <h2 className="text-xl font-semibold text-gray-900">{selectedProspect.company_name}</h2>
+                <h2 className="text-xl font-semibold text-gray-900">{selectedProspect.name}</h2>
                 <a
                   href={`https://${selectedProspect.company_domain}`}
                   target="_blank"

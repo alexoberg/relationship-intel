@@ -247,3 +247,85 @@ export function calculatePriorityScore(
     fitScore * weights.fit
   );
 }
+
+/**
+ * Run prospect matching for specific prospects or all
+ */
+export async function runProspectMatching(
+  teamId: string,
+  options?: { prospectIds?: string[] }
+): Promise<{
+  processed: number;
+  matched: number;
+  errors: string[];
+}> {
+  const errors: string[] = [];
+  let processed = 0;
+  let matched = 0;
+
+  // Get prospects to process
+  let query = supabase
+    .from('prospects')
+    .select('id, company_domain, name')
+    .eq('team_id', teamId)
+    .not('company_domain', 'is', null);
+
+  if (options?.prospectIds && options.prospectIds.length > 0) {
+    query = query.in('id', options.prospectIds);
+  }
+
+  const { data: prospects, error } = await query;
+  if (error || !prospects) {
+    return { processed: 0, matched: 0, errors: [`Failed to fetch prospects: ${error?.message}`] };
+  }
+
+  for (const prospect of prospects) {
+    try {
+      processed++;
+      const connections = await findConnectionsToProspect(teamId, prospect.company_domain);
+
+      if (connections.length > 0) {
+        matched++;
+        connections.sort((a, b) => {
+          if (a.is_current_employee !== b.is_current_employee) {
+            return a.is_current_employee ? -1 : 1;
+          }
+          return b.connection_strength - a.connection_strength;
+        });
+
+        const bestPath = connections[0];
+        const connectionScore = calculateConnectionScore(connections);
+
+        await supabase
+          .from('prospects')
+          .update({
+            connection_score: connectionScore,
+            best_connection_path: {
+              target: bestPath.contact_name,
+              target_title: bestPath.job_title,
+              connector: bestPath.connector_name,
+              strength: bestPath.connection_strength / 100,
+              is_current: bestPath.is_current_employee,
+              contact_id: bestPath.contact_id,
+            },
+            all_connection_paths: connections.slice(0, 10).map(c => ({
+              target: c.contact_name,
+              target_title: c.job_title,
+              connector: c.connector_name,
+              strength: c.connection_strength / 100,
+              is_current: c.is_current_employee,
+              contact_id: c.contact_id,
+            })),
+            has_warm_intro: connections.some(c => c.connector_name),
+            matched_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', prospect.id);
+      }
+    } catch (err) {
+      errors.push(`${prospect.name}: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+  }
+
+  return { processed, matched, errors };
+}

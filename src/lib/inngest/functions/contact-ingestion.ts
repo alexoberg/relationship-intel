@@ -255,14 +255,14 @@ export const enrichContactsPDL = inngest.createFunction(
       // Get unenriched contacts (prioritize those with LinkedIn)
       const { data: contacts } = await supabase
         .from('contacts')
-        .select('id, email, linkedin_url, full_name, current_company')
+        .select('id, email, linkedin_url, full_name, current_company, current_title')
         .eq('team_id', teamId)
         .is('pdl_enriched_at', null)
         .order('connection_strength', { ascending: false, nullsFirst: false })
         .limit(batchSize);
 
       if (!contacts || contacts.length === 0) {
-        return { enriched: 0, errors: [] };
+        return { enriched: 0, total: 0, errors: [] };
       }
 
       let enrichedCount = 0;
