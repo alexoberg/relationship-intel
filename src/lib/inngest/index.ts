@@ -8,7 +8,8 @@ export {
   syncContacts, 
   cleanupContacts, 
   enrichContacts, 
-  scheduledSync 
+  scheduledSync,
+  onLoginSync 
 } from './functions/contact-pipeline';
 
 // Aggregate all functions for the serve handler
@@ -20,7 +21,8 @@ import {
   syncContacts, 
   cleanupContacts, 
   enrichContacts, 
-  scheduledSync 
+  scheduledSync,
+  onLoginSync 
 } from './functions/contact-pipeline';
 
 export const allFunctions = [
@@ -32,4 +34,5 @@ export const allFunctions = [
   cleanupContacts,
   enrichContacts,
   scheduledSync,
+  onLoginSync,
 ];
