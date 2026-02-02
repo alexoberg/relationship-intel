@@ -11,7 +11,8 @@ import { createAdminClient } from '@/lib/supabase/admin';
  *   isGoodFit: boolean,
  *   feedbackReason?: string,
  *   confidence?: 1-5,
- *   reviewTimeMs?: number
+ *   reviewTimeMs?: number,
+ *   userRating?: 1-10 (overall fit rating)
  * }
  */
 export async function POST(request: NextRequest) {
@@ -23,7 +24,7 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { prospectId, isGoodFit, feedbackReason, confidence, reviewTimeMs } = body;
+  const { prospectId, isGoodFit, feedbackReason, confidence, reviewTimeMs, userRating } = body;
 
   if (!prospectId || isGoodFit === undefined) {
     return NextResponse.json(
@@ -37,7 +38,7 @@ export async function POST(request: NextRequest) {
   // Get the prospect with current AI scoring
   const { data: prospect, error: prospectError } = await adminClient
     .from('prospects')
-    .select('id, team_id, helix_fit_score, helix_fit_reason, helix_products, status')
+    .select('id, team_id, helix_fit_score, helix_fit_reason, helix_products, status, connection_score')
     .eq('id', prospectId)
     .single();
 
@@ -63,6 +64,14 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Validate userRating if provided
+  if (userRating !== undefined && (userRating < 1 || userRating > 10)) {
+    return NextResponse.json(
+      { error: 'userRating must be between 1 and 10' },
+      { status: 400 }
+    );
+  }
+
   // Insert or update feedback
   const { data: feedback, error: feedbackError } = await adminClient
     .from('prospect_feedback')
@@ -77,6 +86,7 @@ export async function POST(request: NextRequest) {
       ai_helix_fit_reason: prospect.helix_fit_reason,
       ai_helix_products: prospect.helix_products,
       review_time_ms: reviewTimeMs || null,
+      user_rating: userRating || null,
       created_at: new Date().toISOString(),
     }, {
       onConflict: 'prospect_id,user_id',
@@ -97,6 +107,7 @@ export async function POST(request: NextRequest) {
     user_fit_override: isGoodFit,
     reviewed_at: new Date().toISOString(),
     reviewed_by: user.id,
+    user_rating: userRating || null,
     // Also update legacy fields
     is_good_fit: isGoodFit,
     feedback_notes: feedbackReason || null,
@@ -105,9 +116,20 @@ export async function POST(request: NextRequest) {
     updated_at: new Date().toISOString(),
   };
 
-  // If marked as not a fit and status is new, update status
+  // Recalculate priority score if user rating is provided
+  // Formula: (user_rating * 10) + connection_score + helix_fit_score
+  if (userRating) {
+    const connectionScore = prospect.connection_score || 0;
+    const helixScore = prospect.helix_fit_score || 0;
+    prospectUpdates.priority_score = (userRating * 10) + connectionScore + helixScore;
+  }
+
+  // Update status based on fit assessment
   if (!isGoodFit && prospect.status === 'new') {
     prospectUpdates.status = 'not_a_fit';
+  } else if (isGoodFit && prospect.status === 'not_a_fit') {
+    // Restore from not_a_fit if user says it's a good fit
+    prospectUpdates.status = 'new';
   }
 
   await adminClient
@@ -124,6 +146,7 @@ export async function POST(request: NextRequest) {
       is_good_fit: isGoodFit,
       feedback_reason: feedbackReason,
       confidence,
+      user_rating: userRating,
       ai_score: prospect.helix_fit_score,
     },
     p_notes: feedbackReason,

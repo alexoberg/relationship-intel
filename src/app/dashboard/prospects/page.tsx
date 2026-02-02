@@ -57,6 +57,7 @@ interface Prospect {
   funding_stage?: string | null;
   total_funding?: number | null;
   source?: string | null;
+  user_rating?: number | null;
 }
 
 interface ProspectConnection {
@@ -100,6 +101,7 @@ export default function ProspectsPage() {
   const [selectedProspect, setSelectedProspect] = useState<Prospect | null>(null);
   const [connections, setConnections] = useState<ProspectConnection[]>([]);
   const [feedbackNotes, setFeedbackNotes] = useState('');
+  const [userRating, setUserRating] = useState<number | null>(null);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [minPriorityScore, setMinPriorityScore] = useState<number | null>(null);
   const [hasWarmIntroFilter, setHasWarmIntroFilter] = useState<boolean | null>(null);
@@ -156,6 +158,7 @@ export default function ProspectsPage() {
   const handleSelectProspect = (prospect: Prospect) => {
     setSelectedProspect(prospect);
     setFeedbackNotes(prospect.feedback_notes || '');
+    setUserRating(prospect.user_rating || null);
     loadConnections(prospect.id);
   };
 
@@ -184,6 +187,7 @@ export default function ProspectsPage() {
           prospectId,
           isGoodFit,
           feedbackReason: feedbackNotes || null,
+          userRating: userRating,
         }),
       });
 
@@ -197,14 +201,14 @@ export default function ProspectsPage() {
       setProspects((prev) =>
         prev.map((p) =>
           p.id === prospectId
-            ? { ...p, is_good_fit: isGoodFit, feedback_notes: feedbackNotes, status: newStatus }
+            ? { ...p, is_good_fit: isGoodFit, feedback_notes: feedbackNotes, status: newStatus, user_rating: userRating }
             : p
         )
       );
 
       if (selectedProspect?.id === prospectId) {
         setSelectedProspect((prev) =>
-          prev ? { ...prev, is_good_fit: isGoodFit, feedback_notes: feedbackNotes, status: newStatus } : null
+          prev ? { ...prev, is_good_fit: isGoodFit, feedback_notes: feedbackNotes, status: newStatus, user_rating: userRating } : null
         );
       }
     } catch (error) {
@@ -758,6 +762,46 @@ export default function ProspectsPage() {
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
+            </div>
+
+            {/* User Rating (1-10) */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <Target className="w-4 h-4 inline mr-1" />
+                Your Rating (1-10)
+              </label>
+              <div className="space-y-2">
+                <div className="flex items-center gap-1">
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((rating) => (
+                    <button
+                      key={rating}
+                      onClick={() => setUserRating(rating)}
+                      className={`w-8 h-8 rounded-md text-sm font-medium transition-all ${
+                        userRating === rating
+                          ? rating >= 7
+                            ? 'bg-green-600 text-white shadow-lg scale-110'
+                            : rating >= 4
+                            ? 'bg-yellow-500 text-white shadow-lg scale-110'
+                            : 'bg-red-500 text-white shadow-lg scale-110'
+                          : userRating && userRating >= rating
+                          ? rating >= 7
+                            ? 'bg-green-100 text-green-700'
+                            : rating >= 4
+                            ? 'bg-yellow-100 text-yellow-700'
+                            : 'bg-red-100 text-red-700'
+                          : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                      }`}
+                    >
+                      {rating}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex justify-between text-xs text-gray-500">
+                  <span>Not a fit</span>
+                  <span>Maybe</span>
+                  <span>Perfect fit</span>
+                </div>
+              </div>
             </div>
 
             {/* Feedback */}

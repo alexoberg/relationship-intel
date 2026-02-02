@@ -64,6 +64,7 @@ export default function ProspectReviewPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [feedbackText, setFeedbackText] = useState('');
+  const [userRating, setUserRating] = useState<number | null>(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [reviewHistory, setReviewHistory] = useState<{ prospectId: string; action: 'good' | 'not_fit' | 'skip' }[]>([]);
   const [stats, setStats] = useState({ total: 0, reviewed: 0, unreviewed: 0 });
@@ -100,6 +101,7 @@ export default function ProspectReviewPage() {
   useEffect(() => {
     cardStartTime.current = Date.now();
     setFeedbackText('');
+    setUserRating(null);
   }, [currentIndex]);
 
   // Keyboard shortcuts
@@ -110,6 +112,16 @@ export default function ProspectReviewPage() {
         if (e.key === 'Escape') {
           feedbackInputRef.current?.blur();
         }
+        return;
+      }
+
+      // Number keys for rating (1-9, 0=10)
+      if (e.key >= '1' && e.key <= '9') {
+        setUserRating(parseInt(e.key));
+        return;
+      }
+      if (e.key === '0') {
+        setUserRating(10);
         return;
       }
 
@@ -161,6 +173,7 @@ export default function ProspectReviewPage() {
           isGoodFit,
           feedbackReason: feedbackText || null,
           reviewTimeMs,
+          userRating: userRating,
         }),
       });
 
@@ -311,6 +324,10 @@ export default function ProspectReviewPage() {
             <h3 className="text-lg font-semibold text-white mb-4">Keyboard Shortcuts</h3>
             <div className="space-y-3 text-sm">
               <div className="flex justify-between">
+                <span className="text-gray-400">Rating (1-10)</span>
+                <span className="text-white"><kbd className="px-2 py-1 bg-gray-800 rounded">1-9</kbd>, <kbd className="px-2 py-1 bg-gray-800 rounded">0</kbd>=10</span>
+              </div>
+              <div className="flex justify-between">
                 <span className="text-gray-400">Good Fit</span>
                 <span className="text-white"><kbd className="px-2 py-1 bg-gray-800 rounded">D</kbd> or <kbd className="px-2 py-1 bg-gray-800 rounded">→</kbd></span>
               </div>
@@ -441,6 +458,43 @@ export default function ProspectReviewPage() {
                 )}
               </div>
             )}
+
+            {/* Rating slider */}
+            <div className="p-6 border-b border-gray-800">
+              <label className="block text-sm font-medium text-gray-400 mb-3">
+                Your Rating (1-10) <span className="text-gray-600">— Press number keys</span>
+              </label>
+              <div className="flex items-center justify-center gap-2">
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((rating) => (
+                  <button
+                    key={rating}
+                    onClick={() => setUserRating(rating)}
+                    className={`w-10 h-10 rounded-lg text-sm font-bold transition-all ${
+                      userRating === rating
+                        ? rating >= 7
+                          ? 'bg-green-500 text-white shadow-lg shadow-green-500/30 scale-110'
+                          : rating >= 4
+                          ? 'bg-yellow-500 text-white shadow-lg shadow-yellow-500/30 scale-110'
+                          : 'bg-red-500 text-white shadow-lg shadow-red-500/30 scale-110'
+                        : userRating && userRating >= rating
+                        ? rating >= 7
+                          ? 'bg-green-500/20 text-green-400'
+                          : rating >= 4
+                          ? 'bg-yellow-500/20 text-yellow-400'
+                          : 'bg-red-500/20 text-red-400'
+                        : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                    }`}
+                  >
+                    {rating}
+                  </button>
+                ))}
+              </div>
+              <div className="flex justify-between text-xs text-gray-600 mt-2 px-1">
+                <span>Not a fit</span>
+                <span>Maybe</span>
+                <span>Perfect fit</span>
+              </div>
+            </div>
 
             {/* Feedback input */}
             <div className="p-6 border-b border-gray-800">
