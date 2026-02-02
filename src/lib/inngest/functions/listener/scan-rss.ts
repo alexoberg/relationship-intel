@@ -207,7 +207,7 @@ export const scanRSSFeeds = inngest.createFunction(
           errorDetails: stats.errorDetails,
           cursorData: {
             lastScanAt: new Date().toISOString(),
-            feedsScanned: feedConfigs.map(f => f.name),
+            feedsScanned: feedConfigs.map((f: { name: string; url: string }) => f.name),
           },
         });
       });
