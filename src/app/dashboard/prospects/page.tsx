@@ -23,7 +23,9 @@ import {
   Calendar,
   DollarSign,
   Sparkles,
+  PlayCircle,
 } from 'lucide-react';
+import Link from 'next/link';
 
 interface Prospect {
   id: string;
@@ -236,6 +238,13 @@ export default function ProspectsPage() {
             </p>
           </div>
           <div className="flex gap-3">
+            <Link
+              href="/dashboard/prospects/review"
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 shadow-lg shadow-purple-500/25"
+            >
+              <PlayCircle className="w-4 h-4" />
+              Review Mode
+            </Link>
             <button
               onClick={handleImportSeed}
               disabled={importing}

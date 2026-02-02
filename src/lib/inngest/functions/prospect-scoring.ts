@@ -392,5 +392,295 @@ export const updatePriorityScores = inngest.createFunction(
   }
 );
 
+/**
+ * Learn from user feedback to improve AI scoring
+ * Analyzes patterns in user-confirmed good/bad fits to update scoring prompts
+ */
+export const learnFromFeedback = inngest.createFunction(
+  {
+    id: 'learn-from-feedback',
+    name: 'Learn From Feedback',
+    concurrency: { limit: 1, key: 'event.data.teamId' },
+    retries: 2,
+  },
+  { event: 'prospects/learn-from-feedback' },
+  async ({ event, step }) => {
+    const { teamId, minFeedbackCount = 20 } = event.data;
+    const supabase = createAdminClient();
+    const anthropic = new Anthropic();
+
+    // Step 1: Get all feedback with prospect details
+    const feedback = await step.run('get-feedback', async () => {
+      const { data } = await supabase
+        .from('prospect_feedback')
+        .select(`
+          *,
+          prospect:prospects (
+            company_name,
+            company_domain,
+            company_industry,
+            company_description,
+            funding_stage,
+            helix_products,
+            helix_fit_score,
+            helix_fit_reason
+          )
+        `)
+        .eq('team_id', teamId);
+      return data || [];
+    });
+
+    if (feedback.length < minFeedbackCount) {
+      return {
+        status: 'insufficient_data',
+        message: `Need at least ${minFeedbackCount} feedback items, have ${feedback.length}`,
+        feedbackCount: feedback.length,
+      };
+    }
+
+    // Step 2: Analyze feedback patterns
+    const analysis = await step.run('analyze-patterns', async () => {
+      const goodFits = feedback.filter(f => f.is_good_fit);
+      const notFits = feedback.filter(f => !f.is_good_fit);
+
+      // Group by AI score accuracy
+      const aiAccurate = feedback.filter(f =>
+        (f.ai_helix_fit_score >= 50 && f.is_good_fit) ||
+        (f.ai_helix_fit_score < 50 && !f.is_good_fit)
+      );
+      const aiWrong = feedback.filter(f =>
+        (f.ai_helix_fit_score >= 50 && !f.is_good_fit) ||
+        (f.ai_helix_fit_score < 50 && f.is_good_fit)
+      );
+
+      // Extract patterns from user-confirmed good fits
+      const goodFitExamples = goodFits.slice(0, 10).map(f => ({
+        company: f.prospect?.company_name,
+        domain: f.prospect?.company_domain,
+        industry: f.prospect?.company_industry,
+        funding: f.prospect?.funding_stage,
+        products: f.ai_helix_products,
+        aiReason: f.ai_helix_fit_reason,
+        userReason: f.feedback_reason,
+      }));
+
+      // Extract patterns from user-rejected (AI was wrong)
+      const notFitExamples = notFits.slice(0, 10).map(f => ({
+        company: f.prospect?.company_name,
+        domain: f.prospect?.company_domain,
+        industry: f.prospect?.company_industry,
+        funding: f.prospect?.funding_stage,
+        products: f.ai_helix_products,
+        aiReason: f.ai_helix_fit_reason,
+        userReason: f.feedback_reason,
+      }));
+
+      return {
+        totalFeedback: feedback.length,
+        goodFits: goodFits.length,
+        notFits: notFits.length,
+        aiAccuracy: Math.round((aiAccurate.length / feedback.length) * 100),
+        goodFitExamples,
+        notFitExamples,
+      };
+    });
+
+    // Step 3: Generate improved scoring guidance using Claude
+    const learnings = await step.run('generate-learnings', async () => {
+      const prompt = `Analyze this user feedback on prospect qualification and identify patterns to improve future AI scoring.
+
+CONTEXT: Users are qualifying prospects for Helix's identity verification products:
+- Bot Sorter: Replaces CAPTCHAs (ticketing, e-commerce, account creation)
+- Voice Captcha: Voice-based human verification (social platforms, dating apps, marketplaces)
+- Age Verification: Privacy-preserving age gates (gaming, gambling, alcohol/cannabis)
+
+FEEDBACK SUMMARY:
+- Total feedback: ${analysis.totalFeedback}
+- User confirmed good fits: ${analysis.goodFits}
+- User rejected as not fits: ${analysis.notFits}
+- Current AI accuracy: ${analysis.aiAccuracy}%
+
+USER-CONFIRMED GOOD FITS (AI should learn to identify these):
+${JSON.stringify(analysis.goodFitExamples, null, 2)}
+
+USER-REJECTED PROSPECTS (AI incorrectly scored these as good fits):
+${JSON.stringify(analysis.notFitExamples, null, 2)}
+
+Based on this feedback, provide:
+
+1. PATTERNS TO PRIORITIZE: What types of companies/industries users consistently approve
+2. PATTERNS TO AVOID: What types of companies/industries users consistently reject
+3. FALSE POSITIVE PATTERNS: Where AI overestimates fit (user rejects high AI scores)
+4. FALSE NEGATIVE PATTERNS: Where AI underestimates fit (user approves low AI scores)
+5. IMPROVED SCORING CRITERIA: Specific guidance to add to future scoring prompts
+
+Return JSON:
+{
+  "patterns": {
+    "prioritize": ["pattern1", "pattern2"],
+    "avoid": ["pattern1", "pattern2"],
+    "falsePositives": ["description of common mistakes"],
+    "falseNegatives": ["description of missed opportunities"]
+  },
+  "scoringGuidance": "A paragraph of specific guidance to add to future scoring prompts based on user feedback patterns",
+  "industryWeights": {
+    "industry_name": "increase/decrease/neutral",
+    ...
+  }
+}`;
+
+      const response = await anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 2000,
+        messages: [{ role: 'user', content: prompt }],
+      });
+
+      const text = response.content[0].type === 'text' ? response.content[0].text : '';
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        return { error: 'Failed to parse learnings' };
+      }
+
+      return JSON.parse(jsonMatch[0]);
+    });
+
+    // Step 4: Store learnings for future scoring runs
+    await step.run('store-learnings', async () => {
+      // Store learnings in a team settings table or similar
+      // For now, we'll log it and it can be used to update the scoring prompt
+      await supabase
+        .from('team_settings')
+        .upsert({
+          team_id: teamId,
+          key: 'ai_scoring_learnings',
+          value: {
+            learnings,
+            analysis: {
+              totalFeedback: analysis.totalFeedback,
+              aiAccuracy: analysis.aiAccuracy,
+              lastUpdated: new Date().toISOString(),
+            },
+          },
+        }, {
+          onConflict: 'team_id,key',
+        });
+    });
+
+    // Step 5: Re-score unreviewed prospects with improved criteria
+    const unreviewed = await step.run('get-unreviewed', async () => {
+      const { data } = await supabase
+        .from('prospects')
+        .select('id, company_name, company_domain, company_industry, company_description')
+        .eq('team_id', teamId)
+        .is('reviewed_at', null)
+        .neq('status', 'not_a_fit')
+        .limit(50);
+      return data || [];
+    });
+
+    if (unreviewed.length > 0 && learnings.scoringGuidance) {
+      // Process in batches with improved guidance
+      for (let i = 0; i < unreviewed.length; i += BATCH_SIZE) {
+        const batch = unreviewed.slice(i, i + BATCH_SIZE);
+
+        await step.run(`rescore-batch-${Math.floor(i / BATCH_SIZE)}`, async () => {
+          const prospectInfo = batch.map(p => ({
+            id: p.id,
+            company_name: p.company_name,
+            domain: p.company_domain,
+            industry: p.company_industry,
+            description: p.company_description || 'No description',
+          }));
+
+          const prompt = `You are evaluating companies for Helix's identity verification products.
+
+HELIX PRODUCTS:
+1. **Bot Sorter** - Replaces CAPTCHAs with frictionless bot detection. Best for: ticketing (anti-scalping), e-commerce (checkout fraud), account creation flows
+2. **Voice Captcha** - Unique voice-based human verification. Best for: social platforms (fake account prevention), dating apps (authenticity), marketplaces (trust)
+3. **Age Verification** - Privacy-preserving age gates without collecting DOB. Best for: gaming (age-gated content), gambling, alcohol/cannabis, adult content
+
+IMPORTANT LEARNINGS FROM USER FEEDBACK:
+${learnings.scoringGuidance}
+
+Patterns to prioritize: ${(learnings.patterns?.prioritize || []).join(', ')}
+Patterns to avoid: ${(learnings.patterns?.avoid || []).join(', ')}
+
+Companies to evaluate:
+${JSON.stringify(prospectInfo, null, 2)}
+
+For each company, determine:
+- Which specific Helix product(s) fit and WHY (be specific about the use case)
+- Apply the learnings from user feedback
+- If NO clear fit exists, set is_fit to false
+
+Return JSON:
+{
+  "results": [
+    {
+      "id": "uuid",
+      "is_fit": true,
+      "score": 75,
+      "products": ["bot_sorter"],
+      "reason": "Specific explanation incorporating user feedback learnings"
+    }
+  ]
+}`;
+
+          const response = await anthropic.messages.create({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 4000,
+            messages: [{ role: 'user', content: prompt }],
+          });
+
+          const text = response.content[0].type === 'text' ? response.content[0].text : '';
+          const jsonMatch = text.match(/\{[\s\S]*\}/);
+          if (!jsonMatch) return;
+
+          const results = JSON.parse(jsonMatch[0]).results;
+
+          for (const result of results) {
+            if (result.is_fit === false) {
+              await supabase.from('prospects').update({
+                status: 'not_a_fit',
+                helix_fit_reason: 'No clear Helix product fit (re-scored with user learnings)',
+                helix_fit_score: 0,
+                helix_products: [],
+              }).eq('id', result.id);
+            } else {
+              const products = (result.products || []).map((p: string) => {
+                const lower = p.toLowerCase();
+                if (lower.includes('bot') || lower.includes('captcha_replacement')) return 'captcha_replacement';
+                if (lower.includes('voice')) return 'voice_captcha';
+                if (lower.includes('age')) return 'age_verification';
+                return p;
+              });
+
+              await supabase.from('prospects').update({
+                helix_products: products,
+                helix_fit_score: result.score || 70,
+                helix_fit_reason: result.reason,
+              }).eq('id', result.id);
+            }
+          }
+        });
+
+        await step.sleep('rate-limit', '1s');
+      }
+    }
+
+    return {
+      status: 'success',
+      analysis: {
+        totalFeedback: analysis.totalFeedback,
+        aiAccuracy: analysis.aiAccuracy,
+        goodFits: analysis.goodFits,
+        notFits: analysis.notFits,
+      },
+      learnings: learnings.patterns,
+      rescored: unreviewed.length,
+    };
+  }
+);
+
 // Export all functions
-export const functions = [syncWarmIntros, scoreHelixFit, updatePriorityScores];
+export const functions = [syncWarmIntros, scoreHelixFit, updatePriorityScores, learnFromFeedback];
