@@ -136,12 +136,7 @@ export default function ProspectsPage() {
 
     const { data, error } = await query;
 
-    if (error) {
-      console.error('Error loading prospects:', error);
-    }
-
-    if (data) {
-      console.log(`Loaded ${data.length} prospects (filtered: status!=${statusFilter === 'all' ? 'not_a_fit' : 'other'}, helix_fit_score>0)`);
+    if (!error && data) {
       setProspects(data);
     }
 
