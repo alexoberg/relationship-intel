@@ -1,0 +1,164 @@
+Company Name,Website,Industry,Funding Stage,Description,Helix Fit Score,Why Helix Fits,Priority Score,Connection Score,Has Warm Intro,Best Connector,Connections Count,Status
+XP Ticketing,xp.events,Ticketing,series_a,Modern event ticketing platform focused on fan experience and anti-scalping.,70,Bot Sorter prevents ticket scalping bots.,70,0,No,,0,new
+Mythical Games,mythicalgames.com,Gaming/Blockchain,series_c,"Game studio: NFL Rivals, FIFA Rivals, Pudgy Party. Uses World ID.",50,Bot Sorter alternative to World ID for human verification.,50,0,No,,0,new
+Shotgun,shotgun.live,Ticketing,series_a,Music event ticketing platform popular in Europe.,50,Anti-scalping bot protection.,50,0,No,,0,new
+Fizz,fizzsocial.app,Social Network,series_a,College-only social network requiring .edu verification.,50,Age verification and bot prevention for authentic community.,50,0,No,,0,new
+TicketMe,ticketme.jp,Ticketing/NFT,seed,,50,,50,0,No,,0,new
+The Ticket Fairy,ticketfairy.com,Ticketing,seed,,50,,50,0,No,,0,new
+Citizen Ticket,citizenticket.com,Ticketing,seed,,50,,50,0,No,,0,new
+InEvent,inevent.com,Events,series_a,,50,,50,0,No,,0,new
+Spyke Games,spykegames.com,Gaming,series_a,Mobile gaming studio focused on social games.,50,Bot prevention for fair play.,50,0,No,,0,new
+GameRamp,gameramp.ai,Gaming,seed,,50,,50,0,No,,0,new
+Social First,socialfirst.io,Gaming/Social,seed,,50,,50,0,No,,0,new
+Posh,posh.dating,Dating,series_a,Premium dating app with curated profiles.,50,Identity verification to ensure authentic users.,50,0,No,,4,new
+Cypher Games,cypher.games,Gaming,seed,,50,,50,0,No,,0,new
+Talofa Games,talofagames.com,Gaming,seed,,50,,50,0,No,,0,new
+Grand Games,grand.gs,Gaming,series_a,,50,,50,0,No,,0,new
+Bigger Games,biggergames.io,Gaming,series_a,,50,,50,0,No,,0,new
+Keeper,keeper.dating,Dating,seed,,50,,50,0,No,,0,new
+YouMatch,youmatch.app,Dating,seed,,50,,50,0,No,,0,new
+Hunch,hunch.dating,Social Discovery,series_a,,50,,50,0,No,,0,new
+Iris Dating,irisdating.com,Dating,seed,,50,AI-powered dating,50,0,No,,0,new
+Snack,snack.dating,Dating,seed,,50,Video-first dating,50,0,No,,0,new
+TicketSwap,ticketswap.com,Ticketing,series_b,Fan-to-fan ticket exchange at fair prices.,50,Prevent reseller bots from cornering inventory.,50,0,No,,0,new
+Gametime,gametime.co,Ticketing,series_d,Last-minute ticket marketplace with dynamic pricing.,50,Bot protection for fair ticket access.,50,0,No,,0,new
+Hive Social,hivesocial.app,Social,seed,,50,Twitter alternative,50,0,No,,0,new
+T2,t2.social,Social,seed,,50,Twitter alternative,50,0,No,,0,new
+SeatGeek,seatgeek.com,Ticketing,series_e,Ticket search and marketplace platform.,30,Bot protection for inventory integrity.,30,0,No,,2,new
+Self,self.ai,Identity/ZK,seed,Privacy-preserving proof-of-humanity using ZK proofs and biometric passports.,30,Potential partner - complementary identity verification tech.,30,0,No,,0,new
+KarmaCheck,karmacheck.com,HR Tech,series_b,Modern background check platform for employment verification.,30,Voice Captcha for continuous auth in sensitive verification flows.,30,0,No,,0,new
+Chime,chime.com,Neobank,series_g,Digital banking platform with no fees.,30,KYC identity verification for account opening.,30,0,No,,2,new
+VenuePilot,venuepilot.co,Ticketing,seed,,30,,30,0,No,,0,new
+Lapse,lapse.com,Social Network,series_a,,30,,30,0,No,,0,new
+Bluesky,bsky.app,Social Network,series_a,,30,,30,0,No,,0,new
+SpruceID,spruceid.com,Identity/Web3,seed,Web3 identity infrastructure (Sign-in with Ethereum).,30,Potential partner for decentralized identity.,30,0,No,,0,new
+Claim,claim.co,Social Commerce,series_a,,30,,30,0,No,,0,new
+Method Financial,methodfi.com,Fintech,series_a,,30,,30,0,No,,0,new
+Liminal,liminal.gg,Gaming/UGC,seed,,30,,30,0,No,,0,new
+Pragma,pragma.gg,Gaming Infrastructure,series_a,,30,,30,0,No,,0,new
+Sitch,sitch.app,Dating,seed,,30,,30,0,No,,0,new
+Tabs,tabs.inc,Fintech/B2B,series_a,,30,,30,0,No,,0,new
+Gowalla,gowalla.com,Social Network,seed,,30,,30,0,No,,0,new
+Radix Health,radixhealth.com,Healthcare,series_a,,30,,30,0,No,,0,new
+Tilled,tilled.com,Fintech/PayFac,series_b,,30,,30,0,No,,0,new
+Teamshares,teamshares.com,Fintech,series_b,,30,,30,0,No,,0,new
+Kapital,kapital.mx,Fintech/Neobank,series_a,,30,,30,0,No,,0,new
+TRM Labs,trmlabs.com,Crypto/Compliance,series_b,,30,,30,0,No,,0,new
+RapidSOS,rapidsos.com,Emergency/Safety,series_c,,30,,30,0,No,,0,new
+Boundless,boundless.com,Immigration,series_b,,30,,30,0,No,,0,new
+Roblox Corp,roblox.com,Gaming,public,Massive gaming platform with major bot/identity issues.,30,"Bot Sorter for game integrity, Voice Captcha for age verification.",30,0,No,,0,new
+Tixr,tixr.com,Ticketing,series_a,Premium event ticketing with mobile-first experience.,30,Anti-bot protection for high-demand events.,30,0,No,,0,new
+Neatsy,neatsy.ai,Sneaker Tech,seed,,30,,30,0,No,,0,new
+Humanitix,humanitix.com,Ticketing,series_a,,30,,30,0,No,,0,new
+Kicks Crew,kickscrew.com,Sneaker/E-commerce,series_a,,30,,30,0,No,,0,new
+LegionFarm,legionfarm.com,Gaming,series_a,,30,,30,0,No,,0,new
+Celebratix,celebratix.io,Ticketing/Blockchain,seed,,30,,30,0,No,,0,new
+Seat Unique,seatunique.com,Ticketing/VIP,series_a,,30,,30,0,No,,0,new
+Zuddl,zuddl.com,Events/Virtual,series_a,,30,,30,0,No,,0,new
+Vivenu,vivenu.com,Ticketing API,series_a,,30,,30,0,No,,0,new
+Brella,brella.io,Events/Hybrid,series_a,,30,,30,0,No,,0,new
+ReelSaga,reelsaga.com,Entertainment,seed,,30,,30,0,No,,0,new
+The Edit LDN,theeditldn.com,Sneaker Marketplace,seed,,30,,30,0,No,,0,new
+Laced,laced.com,Sneaker Marketplace,series_a,,30,,30,0,No,,0,new
+Grailed,grailed.com,Streetwear Marketplace,series_a,Streetwear and designer fashion marketplace.,30,Bot protection for limited drops.,30,0,No,,0,new
+Brandback,brandback.io,Resale Infrastructure,seed,,30,,30,0,No,,0,new
+EQL,eql.com,Drops/Bot Protection,seed,,30,,30,0,No,,0,new
+Collectibles.com,collectibles.com,Collectibles Marketplace,seed,,30,,30,0,No,,0,new
+Palmstreet,palmstreet.io,Social Commerce,seed,,30,,30,0,No,,0,new
+Legitmark,legitmark.com,Authentication,seed,,30,,30,0,No,,0,new
+Sleeper,sleeper.com,Fantasy Sports,series_c,,30,,30,0,No,,0,new
+Comet,comet.com,Sneaker Marketplace,series_a,,30,,30,0,No,,0,new
+Wander,wander.com,Travel/Rentals,series_b,,30,,30,0,No,,0,new
+Sleek,sleek.app,Social Network,seed,,30,,30,0,No,,0,new
+VoyceMe,voyceme.com,Social Network,seed,,30,,30,0,No,,0,new
+Pixelfed,pixelfed.org,Social Network,seed,,30,,30,0,No,,0,new
+Circle,circle.so,Creator Platform,series_a,,30,,30,0,No,,0,new
+Gensmo,gensmo.com,Social Network,seed,,30,,30,0,No,,0,new
+Orange Inc,orange-inc.ai,Social Network,series_a,,30,,30,0,No,,0,new
+Hue,poweredbyhue.com,UGC Platform,seed,,30,,30,0,No,,0,new
+Agentio,agentio.com,Creator Platform,series_a,,30,,30,0,No,,0,new
+OpusClip,opusclip.com,Creator Platform,series_a,,30,,30,0,No,,0,new
+Appcharge,appcharge.com,Gaming Payments,series_a,,30,,30,0,No,,0,new
+Kaedim,kaedim.com,Gaming/3D,series_a,,30,,30,0,No,,0,new
+Campfire,campfire.ai,Gaming Community,series_a,,30,,30,0,No,,0,new
+Esports One,esportsone.com,Fantasy Sports,series_a,,30,,30,0,No,,0,new
+Footprint,footprint.io,Identity/KYC,series_a,Identity verification and KYC platform.,30,Competitor - analyze their positioning.,30,0,No,,0,new
+LendAPI,lendapi.com,Lending,seed,,30,,30,0,No,,0,new
+Wabi,wabi.app,Social/Creator,seed,,30,,30,0,No,,0,new
+Fanatics Collect,fanaticscollect.com,Trading Cards,series_a,,30,,30,0,No,,0,new
+Rally,rallyrd.com,Collectibles Investment,series_a,,30,,30,0,No,,0,new
+Socios,socios.com,Fan Tokens,series_a,,30,,30,0,No,,0,new
+KYX World,kyx.world,Sneaker Subscription,seed,,30,,30,0,No,,0,new
+CARIUMA,cariuma.com,Sneaker D2C,series_a,,30,,30,0,No,,0,new
+Koio,koio.co,Luxury Sneakers,series_a,,30,,30,0,No,,0,new
+Sekai,sekai.world,Social Network,seed,,30,,30,0,No,,0,new
+Howbout,howbout.me,Social Network,series_a,,30,,30,0,No,,0,new
+Coopah,coopah.com,Social Network,seed,,30,,30,0,No,,0,new
+Revyze,revyze.com,Social Network,seed,,30,,30,0,No,,0,new
+FERASET,feraset.com,Gaming,seed,,30,,30,0,No,,0,new
+Series Entertainment,series.ai,Gaming,series_a,,30,,30,0,No,,0,new
+RIVRS,rivrs.io,Gaming/UGC,seed,,30,,30,0,No,,0,new
+Smitten,smitten.app,Dating,series_a,,30,,30,0,No,,0,new
+Schmooze,schmoozeapp.com,Dating,series_a,,30,,30,0,No,,0,new
+Pie,getpie.app,Social Discovery,series_a,,30,,30,0,No,,0,new
+First Round's On Me,firstroundsonme.com,Dating,seed,,30,,30,0,No,,0,new
+Together AI,together.ai,AI Infrastructure,series_a,,30,,30,0,No,,0,new
+Comun,comun.com,Neobank,series_a,,30,,30,0,No,,0,new
+Majority,majority.com,Neobank,series_a,,30,,30,0,No,,0,new
+Kontigo,kontigo.com,Neobank,seed,,30,,30,0,No,,0,new
+Shield Payments,shieldpayments.com,Neobank,seed,,30,,30,0,No,,0,new
+Veera,veera.io,Neobank/Crypto,seed,,30,,30,0,No,,0,new
+Munify,munify.io,Neobank,seed,,30,,30,0,No,,0,new
+PlaySafe ID,playsafeid.com,Identity/Gaming,seed,,30,,30,0,No,,0,new
+Payrails,payrails.com,Payments,series_a,,30,,30,0,No,,0,new
+Skydo,skydo.com,Payments,series_a,,30,,30,0,No,,0,new
+Vouchsafe,vouchsafe.id,Identity Verification,seed,,30,,30,0,No,,0,new
+dub,dub.co,Social/Link Platform,series_a,,30,,30,0,No,,0,new
+Nuvo,nuvo.io,B2B Payments,series_a,,30,,30,0,No,,0,new
+Tokyo Beast,tokyobeast.com,Gaming,seed,,30,First Razer ID + World ID integration game,30,0,No,,0,new
+Immutable,immutable.com,Gaming/Web3,series_c,,30,Blockchain gaming infrastructure,30,0,No,,0,new
+Axie Infinity (Sky Mavis),skymavis.com,Gaming/Web3,series_b,,30,"P2E gaming, bot problems",30,0,No,,0,new
+Bumble,bumble.com,Dating,public,Dating app where women make the first move.,30,"Voice Captcha for identity verification, reduce fake profiles.",30,0,No,,0,new
+Feeld,feeld.co,Dating,series_a,Dating app for open-minded individuals and couples.,30,Identity verification for trust and safety.,30,0,No,,0,new
+Thursday,getthursday.com,Dating,seed,,30,Once-a-week dating app,30,0,No,,0,new
+Lox Club,loxclub.com,Dating,seed,,30,Members-only dating,30,0,No,,0,new
+The League,theleague.com,Dating,series_a,,30,Exclusive dating app,30,0,No,,0,new
+Coffee Meets Bagel,coffeemeetsbagel.com,Dating,series_b,,30,Curated dating,30,0,No,,0,new
+Hily,hily.com,Dating,series_a,,30,AI-powered dating,30,0,No,,0,new
+Dispo,dispo.fun,Social/Dating,series_a,,30,Photo social app,30,0,No,,0,new
+Prosopo,prosopo.io,Bot Protection,seed,Privacy-first CAPTCHA alternative.,30,Direct competitor - study their approach.,30,0,No,,0,new
+IdBase,idbase.com,Identity/Ticketing,seed,,30,authenTICKET technology,30,0,No,,0,new
+222,222.place,Social/Dating,seed,,30,,30,0,No,,0,new
+Tixbase,tixbase.com,Ticketing/Blockchain,seed,,30,TixChain + TixID verification,30,0,No,,0,new
+Pocket Gems,pocketgems.com,Gaming,series_d,,30,Mobile gaming studio,30,0,No,,0,new
+Rec Room,recroom.com,Gaming/Social,series_d,,30,"Social gaming, VR",30,0,No,,0,new
+VRChat,vrchat.com,Gaming/Social,series_d,Social VR platform with user-created worlds.,30,Identity verification for trust in virtual spaces.,30,0,No,,0,new
+Fever,feverup.com,Events,series_e,,30,Experience discovery,30,0,No,,0,new
+Current,current.com,Neobank,series_d,Mobile banking for teens and young adults.,30,"Age verification for minors, parent consent flows.",30,0,No,,0,new
+Dave,dave.com,Neobank,public,,30,Banking app,30,0,No,,0,new
+Step,step.com,Neobank,series_c,Teen banking and spending card.,30,Age verification and parental controls.,30,0,No,,0,new
+Consensus,consensus.app,AI/Search,series_a,,30,,30,0,No,,0,new
+Anon Aadhaar,anonaadhaar.org,Identity/ZK,seed,,30,ZK proof of Indian identity,30,0,No,,0,new
+Scopely,scopely.com,Gaming,series_e,,30,"Mobile gaming, acquired by Savvy",30,0,No,,0,new
+Supercell,supercell.com,Gaming,acquired,,30,"Clash of Clans, bot issues",30,0,No,,0,new
+Com2uS,com2us.com,Gaming,public,,30,Mobile gaming,30,0,No,,0,new
+Jam City,jamcity.com,Gaming,series_d,,30,Mobile gaming studio,30,0,No,,0,new
+Kabam,kabam.com,Gaming,acquired,,30,"Mobile gaming, Marvel games",30,0,No,,0,new
+GOAT,goat.com,Sneaker Marketplace,series_f,Leading sneaker and apparel marketplace with authentication.,30,Bot protection for limited drops.,30,0,No,,0,new
+StockX,stockx.com,Sneaker Marketplace,series_e,Stock market for sneakers and collectibles.,30,Bot prevention for fair access to drops.,30,0,No,,0,new
+Whatnot,whatnot.com,Live Commerce,series_d,Live shopping for collectibles and trading cards.,30,Bot protection for fair access to limited items.,30,0,No,,0,new
+NTWRK,thentwrk.com,Live Commerce,series_b,,30,Drop shopping platform,30,0,No,,0,new
+Depop,depop.com,Marketplace,acquired,,30,Gen-Z marketplace,30,0,No,,0,new
+Mercari,mercari.com,Marketplace,public,,30,C2C marketplace,30,0,No,,0,new
+Poshmark,poshmark.com,Marketplace,acquired,,30,Fashion resale,30,0,No,,0,new
+Vinted,vinted.com,Marketplace,series_f,,30,Second-hand fashion,30,0,No,,0,new
+DICE,dice.fm,Ticketing,series_c,Anti-scalping ticketing with fan-first approach.,30,Bot Sorter aligns with anti-scalping mission.,30,0,No,,0,new
+Pollen,pollen.co,Ticketing/Travel,series_c,,30,Group travel/events,30,0,No,,0,new
+Greenlight,greenlight.com,Neobank,series_d,,30,Kids/family banking,30,0,No,,0,new
+GoHenry,gohenry.com,Neobank,series_d,,30,Kids money management,30,0,No,,0,new
+Mastodon,joinmastodon.org,Social,non-profit,,30,Decentralized social,30,0,No,,0,new
+Threads (Meta),threads.net,Social,meta,,30,Twitter competitor,30,0,No,,0,new
+Post.news,post.news,Social,seed,,30,News social platform,30,0,No,,0,new
+Spill,spill.com,Social,seed,,30,Culture-focused social,30,0,No,,0,new
+Artifact,artifact.news,Social/News,seed,,30,AI news app (Instagram founders),30,0,No,,0,new
+Alt,alt.xyz,Sports Cards,series_a,Alternative asset investment platform for sports cards and collectibles. Users buy/sell fractional shares.,30,High-value transactions attract bots and fraud. Identity verification for authenticity.,30,0,No,,2,new
