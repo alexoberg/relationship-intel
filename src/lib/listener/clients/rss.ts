@@ -272,7 +272,7 @@ export async function fetchRecentArticles(
 /**
  * Extract clean text from article (strips HTML)
  */
-export function getArticleText(article: RSSArticle): string {
+export function getArticleText(article: Pick<RSSArticle, 'title' | 'description' | 'content'>): string {
   const parts: string[] = [];
 
   if (article.title) parts.push(article.title);
@@ -291,6 +291,6 @@ export function getArticleText(article: RSSArticle): string {
 /**
  * Get article URL (normalized)
  */
-export function getArticleUrl(article: RSSArticle): string {
+export function getArticleUrl(article: Pick<RSSArticle, 'link'>): string {
   return article.link || '';
 }
