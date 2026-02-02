@@ -22,9 +22,10 @@ import { DiscoveryCandidate, RSSArticle } from '@/lib/listener/types';
 
 /**
  * Process a single RSS article and create discoveries if relevant
+ * Note: pubDate may be string after Inngest JSON serialization
  */
 async function processArticle(
-  article: RSSArticle & { feedName: string },
+  article: Omit<RSSArticle, 'pubDate'> & { feedName: string; pubDate?: Date | string },
   teamId: string
 ): Promise<{ created: number; duplicates: number; errors: number }> {
   const results = { created: 0, duplicates: 0, errors: 0 };
@@ -50,11 +51,16 @@ async function processArticle(
     try {
       const triggerText = getBestMatchContext(text, matchResult.matches, 200);
 
+      // Convert pubDate back to Date if it was serialized to string by Inngest
+      const pubDate = article.pubDate
+        ? (typeof article.pubDate === 'string' ? new Date(article.pubDate) : article.pubDate)
+        : null;
+
       const { score } = scoreDiscovery({
         matches: matchResult.matches,
         sourceType: 'news_article',
         domainSource: domain.source,
-        publishedAt: article.pubDate || null,
+        publishedAt: pubDate,
         triggerText,
         companyDomain: domain.domain,
         sourceTitle: article.title,
@@ -71,7 +77,7 @@ async function processArticle(
         keywordCategory: getPrimaryCategory(matchResult.matches) || undefined,
         confidenceScore: score,
         helixProducts: matchResult.suggestedHelixProducts,
-        sourcePublishedAt: article.pubDate,
+        sourcePublishedAt: pubDate || undefined,
       };
 
       const result = await createDiscovery(candidate, teamId);
