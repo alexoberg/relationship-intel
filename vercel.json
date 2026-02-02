@@ -3,5 +3,15 @@
     "src/app/api/sync/route.ts": {
       "maxDuration": 60
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/listener-hn",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/listener-rss",
+      "schedule": "0 */6 * * *"
+    }
+  ]
 }

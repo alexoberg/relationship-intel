@@ -48,8 +48,41 @@ export interface BackgroundSyncStartedEvent {
   };
 }
 
+// Listener events
+export interface ListenerScanHNEvent {
+  name: 'listener/scan-hn';
+  data: {
+    teamId: string;
+    scanType?: 'front_page' | 'ask_hn' | 'show_hn' | 'all';
+    maxItems?: number;
+    includeComments?: boolean;
+  };
+}
+
+export interface ListenerScanRSSEvent {
+  name: 'listener/scan-rss';
+  data: {
+    teamId: string;
+    feedUrls?: string[];
+    maxArticles?: number;
+    maxAgeHours?: number;
+  };
+}
+
+export interface ListenerPromoteEvent {
+  name: 'listener/promote';
+  data: {
+    discoveryId: string;
+    teamId: string;
+    userId?: string;
+  };
+}
+
 export type InngestEvents =
   | EnrichmentStartedEvent
   | EnrichmentCompletedEvent
   | SyncCompletedEvent
-  | BackgroundSyncStartedEvent;
+  | BackgroundSyncStartedEvent
+  | ListenerScanHNEvent
+  | ListenerScanRSSEvent
+  | ListenerPromoteEvent;

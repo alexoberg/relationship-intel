@@ -14,6 +14,7 @@ import {
   Sparkles,
   ChevronRight,
   Target,
+  Radio,
 } from 'lucide-react';
 import type { User } from '@supabase/supabase-js';
 import type { Profile } from '@/types/database';
@@ -25,6 +26,7 @@ interface SidebarProps {
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+  { name: 'Listener', href: '/dashboard/listener', icon: Radio },
   { name: 'Prospects', href: '/dashboard/prospects', icon: Target },
   { name: 'Contacts', href: '/dashboard/contacts', icon: Users },
   { name: 'Team Network', href: '/dashboard/team', icon: UsersRound },
