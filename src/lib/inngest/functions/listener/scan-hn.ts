@@ -355,10 +355,12 @@ export const scanHackerNews = inngest.createFunction(
           duplicatesSkipped: stats.duplicatesSkipped,
           autoPromoted: stats.autoPromoted,
           errorsCount: stats.errorsCount,
-          commenterProfilesChecked: stats.commenterProfilesChecked,
-          highRelevanceStoriesProcessed: highRelevanceStories.length,
           errorDetails: stats.errorDetails,
-          cursorData: { lastScanAt: new Date().toISOString() },
+          cursorData: {
+            lastScanAt: new Date().toISOString(),
+            commenterProfilesChecked: stats.commenterProfilesChecked,
+            highRelevanceStoriesProcessed: highRelevanceStories.length,
+          },
         });
       });
 

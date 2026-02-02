@@ -282,8 +282,8 @@ export default function ProspectsPage() {
   });
 
   // Get unique values for filter dropdowns
-  const uniqueFundingStages = [...new Set(prospects.map(p => p.funding_stage).filter(Boolean))];
-  const uniqueSources = [...new Set(prospects.map(p => p.source).filter(Boolean))];
+  const uniqueFundingStages = [...new Set(prospects.map(p => p.funding_stage).filter((s): s is string => !!s))];
+  const uniqueSources = [...new Set(prospects.map(p => p.source).filter((s): s is string => !!s))];
 
   // CSV Export
   const handleExportCSV = () => {
