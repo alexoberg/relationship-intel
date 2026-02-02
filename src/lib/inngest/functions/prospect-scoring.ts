@@ -684,6 +684,140 @@ Return JSON:
 );
 
 /**
+ * Check if a domain is reachable/exists
+ * Returns false if domain doesn't resolve or returns error
+ */
+async function checkDomainExists(domain: string): Promise<{ exists: boolean; redirectedTo?: string }> {
+  if (!domain) return { exists: false };
+
+  // Clean up domain
+  const cleanDomain = domain.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000); // 5s timeout
+
+    const response = await fetch(`https://${cleanDomain}`, {
+      method: 'HEAD',
+      signal: controller.signal,
+      redirect: 'follow',
+    });
+
+    clearTimeout(timeout);
+
+    // Check if we got redirected to a different domain (could indicate acquisition/pivot)
+    const finalUrl = response.url;
+    const finalDomain = new URL(finalUrl).hostname.replace(/^www\./, '');
+
+    if (finalDomain !== cleanDomain && !finalDomain.includes(cleanDomain)) {
+      return { exists: true, redirectedTo: finalDomain };
+    }
+
+    return { exists: response.ok || response.status < 500 };
+  } catch (error: any) {
+    // Try HTTP as fallback
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+
+      const response = await fetch(`http://${cleanDomain}`, {
+        method: 'HEAD',
+        signal: controller.signal,
+        redirect: 'follow',
+      });
+
+      clearTimeout(timeout);
+      return { exists: response.ok || response.status < 500 };
+    } catch {
+      return { exists: false };
+    }
+  }
+}
+
+/**
+ * Verify domains exist and mark dead ones
+ * Checks actual domain resolution, not just a static list
+ */
+export const verifyProspectDomains = inngest.createFunction(
+  {
+    id: 'verify-prospect-domains',
+    name: 'Verify Prospect Domains',
+    concurrency: { limit: 1, key: 'event.data.teamId' },
+    retries: 1,
+  },
+  { event: 'prospects/verify-domains' },
+  async ({ event, step }) => {
+    const { teamId, batchSize = 50 } = event.data;
+    const supabase = createAdminClient();
+
+    // Get prospects with domains that haven't been verified recently
+    const prospects = await step.run('get-prospects', async () => {
+      const { data } = await supabase
+        .from('prospects')
+        .select('id, company_name, company_domain')
+        .eq('team_id', teamId)
+        .neq('status', 'not_a_fit')
+        .not('company_domain', 'is', null)
+        .order('created_at', { ascending: true })
+        .limit(batchSize);
+      return data || [];
+    });
+
+    let deadDomains = 0;
+    let redirectedDomains = 0;
+    let validDomains = 0;
+
+    // Check domains in batches to avoid rate limits
+    for (let i = 0; i < prospects.length; i += 10) {
+      const batch = prospects.slice(i, i + 10);
+
+      await step.run(`check-batch-${Math.floor(i / 10)}`, async () => {
+        const results = await Promise.all(
+          batch.map(async (p) => {
+            const result = await checkDomainExists(p.company_domain);
+            return { prospect: p, ...result };
+          })
+        );
+
+        for (const { prospect, exists, redirectedTo } of results) {
+          if (!exists) {
+            // Domain doesn't exist - mark as not a fit
+            await supabase.from('prospects').update({
+              status: 'not_a_fit',
+              helix_fit_reason: `Domain ${prospect.company_domain} no longer exists - company may be defunct`,
+              helix_fit_score: 0,
+            }).eq('id', prospect.id);
+            deadDomains++;
+          } else if (redirectedTo) {
+            // Domain redirects elsewhere - update the domain
+            await supabase.from('prospects').update({
+              company_domain: redirectedTo,
+              helix_fit_reason: `Domain redirected from ${prospect.company_domain} to ${redirectedTo}`,
+            }).eq('id', prospect.id);
+            redirectedDomains++;
+          } else {
+            validDomains++;
+          }
+        }
+      });
+
+      // Rate limit between batches
+      if (i + 10 < prospects.length) {
+        await step.sleep('rate-limit', '2s');
+      }
+    }
+
+    return {
+      status: 'success',
+      checked: prospects.length,
+      deadDomains,
+      redirectedDomains,
+      validDomains,
+    };
+  }
+);
+
+/**
  * Clean up dead/defunct companies and verify data quality
  * - Eliminates known dead companies
  * - Ensures all active prospects have helix_fit_reason and helix_products
@@ -933,4 +1067,4 @@ IMPORTANT: products array must use exact values: captcha_replacement, voice_capt
 );
 
 // Export all functions
-export const functions = [syncWarmIntros, scoreHelixFit, updatePriorityScores, learnFromFeedback, cleanupProspects];
+export const functions = [syncWarmIntros, scoreHelixFit, updatePriorityScores, learnFromFeedback, cleanupProspects, verifyProspectDomains];

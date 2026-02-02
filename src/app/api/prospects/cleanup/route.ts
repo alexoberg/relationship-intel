@@ -6,11 +6,19 @@ import { inngest } from '@/lib/inngest/client';
 /**
  * POST /api/prospects/cleanup - Trigger prospect cleanup job
  *
+ * Query params:
+ * - action: 'cleanup' (default) | 'verify-domains'
+ *
  * Cleans up:
  * - Dead/defunct companies
  * - Prospects missing helix_fit_reason or helix_products
  * - Orphaned connections
  * - Incorrect connection counts
+ *
+ * verify-domains:
+ * - Checks if domains actually resolve
+ * - Marks non-existent domains as not_a_fit
+ * - Updates redirected domains
  */
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
@@ -32,7 +40,26 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'No team found' }, { status: 404 });
   }
 
-  // Trigger the cleanup job
+  const searchParams = request.nextUrl.searchParams;
+  const action = searchParams.get('action') || 'cleanup';
+
+  if (action === 'verify-domains') {
+    // Trigger domain verification job
+    await inngest.send({
+      name: 'prospects/verify-domains',
+      data: {
+        teamId: membership.team_id,
+        batchSize: 100, // Check 100 domains per run
+      },
+    });
+
+    return NextResponse.json({
+      success: true,
+      message: 'Domain verification job started. Check Inngest dashboard for progress.',
+    });
+  }
+
+  // Default: trigger the cleanup job
   await inngest.send({
     name: 'prospects/cleanup',
     data: {
