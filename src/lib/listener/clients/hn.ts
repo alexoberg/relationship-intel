@@ -3,9 +3,15 @@
 // ============================================
 // Uses official HN API: https://github.com/HackerNews/API
 
-import { HNItem, HNScanResult } from '../types';
+import { HNItem, HNScanResult, HNUser, HNUserCompanyInfo } from '../types';
+import { extractDomainFromUrl, isCompanyDomain, normalizeDomain, domainToCompanyName } from '../domain-extractor';
 
 const HN_API_BASE = 'https://hacker-news.firebaseio.com/v0';
+
+// Cache for user profiles to avoid re-fetching
+const userCache = new Map<string, HNUser | null>();
+const USER_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+const userCacheTimestamps = new Map<string, number>();
 
 // ============================================
 // API FUNCTIONS
@@ -284,4 +290,222 @@ export function getItemText(item: HNItem): string {
   }
 
   return parts.join('\n\n');
+}
+
+// ============================================
+// USER PROFILE FUNCTIONS
+// ============================================
+
+/**
+ * Fetch a HN user profile by username
+ */
+export async function fetchUser(username: string): Promise<HNUser | null> {
+  // Check cache first
+  const cacheTime = userCacheTimestamps.get(username);
+  if (cacheTime && Date.now() - cacheTime < USER_CACHE_TTL) {
+    return userCache.get(username) || null;
+  }
+
+  try {
+    const response = await fetch(`${HN_API_BASE}/user/${username}.json`);
+    if (!response.ok) {
+      userCache.set(username, null);
+      userCacheTimestamps.set(username, Date.now());
+      return null;
+    }
+
+    const user = await response.json();
+    if (!user) {
+      userCache.set(username, null);
+      userCacheTimestamps.set(username, Date.now());
+      return null;
+    }
+
+    userCache.set(username, user as HNUser);
+    userCacheTimestamps.set(username, Date.now());
+    return user as HNUser;
+  } catch (error) {
+    console.error(`Failed to fetch HN user ${username}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Fetch multiple users in parallel
+ */
+export async function fetchUsers(
+  usernames: string[],
+  concurrency: number = 5
+): Promise<Map<string, HNUser>> {
+  const users = new Map<string, HNUser>();
+  const uniqueUsernames = [...new Set(usernames)];
+
+  for (let i = 0; i < uniqueUsernames.length; i += concurrency) {
+    const batch = uniqueUsernames.slice(i, i + concurrency);
+    const results = await Promise.all(batch.map(u => fetchUser(u)));
+
+    for (let j = 0; j < batch.length; j++) {
+      if (results[j]) {
+        users.set(batch[j], results[j]!);
+      }
+    }
+
+    // Small delay between batches
+    if (i + concurrency < uniqueUsernames.length) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  }
+
+  return users;
+}
+
+/**
+ * Extract company information from a HN user's "about" field
+ *
+ * HN users often put:
+ * - Company URL: "https://mycompany.com"
+ * - Email: "john@company.com"
+ * - Work info: "I work at Stripe" or "Founder of Acme Inc"
+ * - Twitter/LinkedIn with company context
+ */
+export function extractCompanyFromProfile(user: HNUser): HNUserCompanyInfo {
+  const result: HNUserCompanyInfo = {
+    username: user.id,
+    companyDomain: null,
+    companyName: null,
+    confidence: 0,
+    source: 'about_text',
+    rawAbout: user.about || null,
+  };
+
+  if (!user.about) return result;
+
+  const about = user.about;
+
+  // Clean HTML and decode entities
+  const cleanAbout = about
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#x27;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // 1. Look for URLs in about (highest confidence)
+  const urlRegex = /https?:\/\/[^\s<>"']+/gi;
+  const urls = about.match(urlRegex) || [];
+
+  for (const url of urls) {
+    const domain = extractDomainFromUrl(url);
+    if (domain && isCompanyDomain(domain)) {
+      result.companyDomain = domain;
+      result.companyName = domainToCompanyName(domain);
+      result.confidence = 0.9;
+      result.source = 'about_url';
+      return result;
+    }
+  }
+
+  // 2. Look for email addresses
+  const emailRegex = /[a-zA-Z0-9._%+-]+@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/gi;
+  let emailMatch;
+  while ((emailMatch = emailRegex.exec(cleanAbout)) !== null) {
+    const domain = normalizeDomain(emailMatch[1]);
+    // Skip common email providers
+    const skipDomains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com',
+                        'icloud.com', 'protonmail.com', 'fastmail.com', 'hey.com',
+                        'me.com', 'mac.com', 'live.com', 'msn.com', 'aol.com'];
+    if (domain && !skipDomains.includes(domain) && isCompanyDomain(domain)) {
+      result.companyDomain = domain;
+      result.companyName = domainToCompanyName(domain);
+      result.confidence = 0.85;
+      result.source = 'email_domain';
+      return result;
+    }
+  }
+
+  // 3. Look for work patterns like "I work at X" or "Founder of X" or "Engineer at X"
+  const workPatterns = [
+    /(?:work(?:ing)?|employed)\s+(?:at|for|with)\s+([A-Z][A-Za-z0-9\s&.-]+?)(?:[,.\s]|$)/i,
+    /(?:founder|co-founder|ceo|cto|vp|director|engineer|developer|designer)\s+(?:at|of|@)\s+([A-Z][A-Za-z0-9\s&.-]+?)(?:[,.\s]|$)/i,
+    /(?:building|built|created?)\s+([A-Z][A-Za-z0-9\s&.-]+?)(?:[,.\s]|$)/i,
+    /@([A-Za-z][A-Za-z0-9_-]+)\s/,  // Twitter handle might be company
+  ];
+
+  for (const pattern of workPatterns) {
+    const match = cleanAbout.match(pattern);
+    if (match && match[1]) {
+      const companyName = match[1].trim();
+      // Skip if it's a common phrase or too short
+      if (companyName.length > 2 && !['the', 'a', 'an', 'my', 'our'].includes(companyName.toLowerCase())) {
+        result.companyName = companyName;
+        result.confidence = 0.6;
+        result.source = 'about_text';
+        // Try to guess domain
+        const guessedDomain = companyName.toLowerCase()
+          .replace(/\s+/g, '')
+          .replace(/[^a-z0-9]/g, '') + '.com';
+        result.companyDomain = guessedDomain;
+        return result;
+      }
+    }
+  }
+
+  // 4. Look for standalone domain mentions
+  const domainRegex = /\b([a-zA-Z0-9][-a-zA-Z0-9]*\.)+(?:com|org|net|io|co|ai|app|dev|tech)\b/gi;
+  const domainMentions = cleanAbout.match(domainRegex) || [];
+
+  for (const mention of domainMentions) {
+    const domain = normalizeDomain(mention);
+    if (domain && isCompanyDomain(domain)) {
+      result.companyDomain = domain;
+      result.companyName = domainToCompanyName(domain);
+      result.confidence = 0.7;
+      result.source = 'about_text';
+      return result;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Get company info for commenters on a story
+ * Returns a map of username -> company info
+ */
+export async function getCommenterCompanies(
+  comments: HNItem[],
+  maxUsers: number = 50
+): Promise<Map<string, HNUserCompanyInfo>> {
+  // Get unique usernames from comments
+  const usernames = [...new Set(
+    comments
+      .filter(c => c.by)
+      .map(c => c.by!)
+  )].slice(0, maxUsers);
+
+  // Fetch user profiles
+  const users = await fetchUsers(usernames);
+
+  // Extract company info from each profile
+  const companyInfo = new Map<string, HNUserCompanyInfo>();
+
+  for (const [username, user] of users) {
+    const info = extractCompanyFromProfile(user);
+    if (info.companyDomain || info.companyName) {
+      companyInfo.set(username, info);
+    }
+  }
+
+  return companyInfo;
+}
+
+/**
+ * Get user profile URL
+ */
+export function getUserUrl(username: string): string {
+  return `https://news.ycombinator.com/user?id=${username}`;
 }

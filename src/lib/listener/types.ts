@@ -113,6 +113,23 @@ export interface HNItem {
   dead?: boolean;
 }
 
+export interface HNUser {
+  id: string;        // username
+  created: number;   // Unix timestamp
+  karma: number;
+  about?: string;    // Bio - may contain company info
+  submitted?: number[]; // IDs of submitted items
+}
+
+export interface HNUserCompanyInfo {
+  username: string;
+  companyDomain: string | null;
+  companyName: string | null;
+  confidence: number;
+  source: 'about_url' | 'about_text' | 'email_domain';
+  rawAbout: string | null;
+}
+
 export interface HNScanResult {
   items: HNItem[];
   scannedCount: number;
