@@ -98,15 +98,16 @@ export const syncProspectConnections = inngest.createFunction(
 );
 
 /**
- * Score a prospect for Helix product fit
+ * Score a single prospect for Helix product fit (rule-based)
+ * Note: For batch AI-powered scoring, use 'prospects/score-helix-fit' event instead
  */
-export const scoreHelixFit = inngest.createFunction(
+export const scoreHelixFitSingle = inngest.createFunction(
   {
-    id: 'score-helix-fit',
-    name: 'Score Prospect for Helix Product Fit',
+    id: 'score-helix-fit-single',
+    name: 'Score Single Prospect for Helix Product Fit',
     concurrency: { limit: 5 },
   },
-  { event: 'prospects/score-helix-fit' },
+  { event: 'prospects/score-helix-fit-single' },
   async ({ event, step }) => {
     const { prospectId } = event.data;
     const supabase = createAdminClient();
@@ -231,7 +232,7 @@ export const importProspects = inngest.createFunction(
       await step.run('trigger-scoring', async () => {
         for (const prospectId of results.inserted) {
           await inngest.send({
-            name: 'prospects/score-helix-fit',
+            name: 'prospects/score-helix-fit-single',
             data: { prospectId },
           });
         }
@@ -403,8 +404,8 @@ export const runProspectPipeline = inngest.createFunction(
     const { prospectId } = event.data;
 
     // Step 1: Score Helix fit
-    await step.invoke('score-helix-fit', {
-      function: scoreHelixFit,
+    await step.invoke('score-helix-fit-single', {
+      function: scoreHelixFitSingle,
       data: { prospectId },
     });
 
@@ -439,7 +440,7 @@ export const runProspectPipeline = inngest.createFunction(
 export const functions = [
   matchProspectConnections,
   syncProspectConnections, // Legacy, forwards to matchProspectConnections
-  scoreHelixFit,
+  scoreHelixFitSingle,
   importProspects,
   enrichProspectContacts,
   runProspectPipeline,
