@@ -120,9 +120,15 @@ export default function ProspectsPage() {
       .select('*')
       .order('priority_score', { ascending: false });
 
-    if (statusFilter !== 'all') {
+    // Filter by status - exclude not_a_fit unless explicitly selected
+    if (statusFilter === 'all') {
+      query = query.neq('status', 'not_a_fit');
+    } else {
       query = query.eq('status', statusFilter);
     }
+
+    // Filter by helix fit score > 0 (exclude eliminated prospects)
+    query = query.gt('helix_fit_score', 0);
 
     if (productFilter) {
       query = query.contains('helix_products', [productFilter]);

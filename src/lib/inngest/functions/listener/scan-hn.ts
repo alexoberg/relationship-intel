@@ -390,4 +390,48 @@ export const scanHackerNews = inngest.createFunction(
   }
 );
 
-export const functions = [scanHackerNews];
+/**
+ * Scheduled HN scan - runs every 2 hours
+ * Requires a default team ID to be set in environment
+ */
+export const scheduledHNScan = inngest.createFunction(
+  {
+    id: 'listener-scan-hn-scheduled',
+    name: 'Listener: Scheduled HN Scan',
+    concurrency: { limit: 1 },
+    retries: 1,
+  },
+  { cron: '0 */2 * * *' }, // Every 2 hours
+  async ({ step }) => {
+    // Get the default team ID (first team in the system)
+    const { createAdminClient } = await import('@/lib/supabase/admin');
+    const adminClient = createAdminClient();
+
+    const { data: team } = await adminClient
+      .from('teams')
+      .select('id')
+      .limit(1)
+      .single();
+
+    if (!team) {
+      console.log('No team found for scheduled HN scan');
+      return { status: 'skipped', reason: 'no_team' };
+    }
+
+    // Trigger the main scan function
+    await step.sendEvent('trigger-hn-scan', {
+      name: 'listener/scan-hn',
+      data: {
+        teamId: team.id,
+        scanType: 'all',
+        maxItems: 100,
+        includeComments: true,
+        minScoreForComments: 3,
+      },
+    });
+
+    return { status: 'triggered', teamId: team.id };
+  }
+);
+
+export const functions = [scanHackerNews, scheduledHNScan];
