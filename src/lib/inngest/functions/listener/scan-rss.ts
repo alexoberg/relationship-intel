@@ -133,7 +133,7 @@ export const scanRSSFeeds = inngest.createFunction(
     try {
       // Fetch articles from RSS feeds
       const feedConfigs = feedUrls
-        ? feedUrls.map(url => ({ url, name: url }))
+        ? feedUrls.map((url: string) => ({ url, name: url }))
         : DEFAULT_FEEDS;
 
       const articles = await step.run('fetch-articles', async () => {
