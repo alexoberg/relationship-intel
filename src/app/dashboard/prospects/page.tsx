@@ -24,6 +24,8 @@ import {
   DollarSign,
   Sparkles,
   PlayCircle,
+  Download,
+  SlidersHorizontal,
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -54,6 +56,7 @@ interface Prospect {
   connection_context?: string | null;
   funding_stage?: string | null;
   total_funding?: number | null;
+  source?: string | null;
 }
 
 interface ProspectConnection {
@@ -97,6 +100,11 @@ export default function ProspectsPage() {
   const [selectedProspect, setSelectedProspect] = useState<Prospect | null>(null);
   const [connections, setConnections] = useState<ProspectConnection[]>([]);
   const [feedbackNotes, setFeedbackNotes] = useState('');
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [minPriorityScore, setMinPriorityScore] = useState<number | null>(null);
+  const [hasWarmIntroFilter, setHasWarmIntroFilter] = useState<boolean | null>(null);
+  const [fundingStageFilter, setFundingStageFilter] = useState<string | null>(null);
+  const [sourceFilter, setSourceFilter] = useState<string | null>(null);
 
   const supabase = createClient();
 
@@ -232,12 +240,108 @@ export default function ProspectsPage() {
     setSyncing(false);
   };
 
-  const filteredProspects = prospects.filter((p) =>
-    search
-      ? p.company_name?.toLowerCase().includes(search.toLowerCase()) ||
-        p.company_domain?.toLowerCase().includes(search.toLowerCase())
-      : true
-  );
+  const filteredProspects = prospects.filter((p) => {
+    // Text search
+    if (search) {
+      const searchLower = search.toLowerCase();
+      const matchesSearch =
+        p.company_name?.toLowerCase().includes(searchLower) ||
+        p.company_domain?.toLowerCase().includes(searchLower) ||
+        p.company_industry?.toLowerCase().includes(searchLower) ||
+        p.helix_fit_reason?.toLowerCase().includes(searchLower);
+      if (!matchesSearch) return false;
+    }
+
+    // Min priority score
+    if (minPriorityScore !== null && (p.priority_score || 0) < minPriorityScore) {
+      return false;
+    }
+
+    // Has warm intro
+    if (hasWarmIntroFilter !== null && p.has_warm_intro !== hasWarmIntroFilter) {
+      return false;
+    }
+
+    // Funding stage
+    if (fundingStageFilter && p.funding_stage !== fundingStageFilter) {
+      return false;
+    }
+
+    // Source
+    if (sourceFilter && p.source !== sourceFilter) {
+      return false;
+    }
+
+    return true;
+  });
+
+  // Get unique values for filter dropdowns
+  const uniqueFundingStages = [...new Set(prospects.map(p => p.funding_stage).filter(Boolean))];
+  const uniqueSources = [...new Set(prospects.map(p => p.source).filter(Boolean))];
+
+  // CSV Export
+  const handleExportCSV = () => {
+    const headers = [
+      'Company Name',
+      'Domain',
+      'Industry',
+      'Status',
+      'Priority Score',
+      'Helix Fit Score',
+      'Helix Products',
+      'Helix Fit Reason',
+      'Has Warm Intro',
+      'Connections Count',
+      'Best Connector',
+      'Funding Stage',
+      'Source',
+    ];
+
+    const rows = filteredProspects.map(p => [
+      p.company_name || '',
+      p.company_domain || '',
+      p.company_industry || '',
+      p.status || '',
+      p.priority_score?.toString() || '',
+      p.helix_fit_score?.toString() || '',
+      (p.helix_products || []).join('; '),
+      (p.helix_fit_reason || '').replace(/"/g, '""'), // Escape quotes
+      p.has_warm_intro ? 'Yes' : 'No',
+      p.connections_count?.toString() || '0',
+      p.best_connector || '',
+      p.funding_stage || '',
+      p.source || '',
+    ]);
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `helix-prospects-${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const clearAllFilters = () => {
+    setSearch('');
+    setStatusFilter('all');
+    setProductFilter(null);
+    setMinPriorityScore(null);
+    setHasWarmIntroFilter(null);
+    setFundingStageFilter(null);
+    setSourceFilter(null);
+  };
+
+  const hasActiveFilters = search || statusFilter !== 'all' || productFilter ||
+    minPriorityScore !== null || hasWarmIntroFilter !== null ||
+    fundingStageFilter || sourceFilter;
 
   return (
     <div className="flex gap-6 h-[calc(100vh-8rem)]">
@@ -251,6 +355,15 @@ export default function ProspectsPage() {
             </p>
           </div>
           <div className="flex gap-3">
+            <button
+              onClick={handleExportCSV}
+              disabled={filteredProspects.length === 0}
+              className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+              title={`Export ${filteredProspects.length} prospects to CSV`}
+            >
+              <Download className="w-4 h-4" />
+              Export CSV
+            </button>
             <Link
               href="/dashboard/prospects/review"
               className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 shadow-lg shadow-purple-500/25"
@@ -278,31 +391,49 @@ export default function ProspectsPage() {
         </div>
 
         {/* Filters */}
-        <div className="flex gap-4 mb-6">
-          <div className="flex-1 relative">
-            <Search className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search companies..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
-            />
-          </div>
-          <div className="relative">
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="appearance-none pl-4 pr-10 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none bg-white"
+        <div className="space-y-3 mb-6">
+          <div className="flex gap-4">
+            <div className="flex-1 relative">
+              <Search className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search companies, domains, industries..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
+              />
+            </div>
+            <div className="relative">
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="appearance-none pl-4 pr-10 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none bg-white"
+              >
+                {STATUS_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+            </div>
+            <button
+              onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                showAdvancedFilters || hasActiveFilters
+                  ? 'bg-primary-100 text-primary-700 border border-primary-300'
+                  : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-50'
+              }`}
             >
-              {STATUS_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+              <SlidersHorizontal className="w-4 h-4" />
+              Filters
+              {hasActiveFilters && (
+                <span className="bg-primary-600 text-white text-xs px-1.5 py-0.5 rounded-full">!</span>
+              )}
+            </button>
           </div>
+
+          {/* Product filter buttons */}
           <div className="flex gap-2">
             {HELIX_PRODUCTS.map((product) => (
               <button
@@ -319,6 +450,88 @@ export default function ProspectsPage() {
               </button>
             ))}
           </div>
+
+          {/* Advanced filters */}
+          {showAdvancedFilters && (
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-sm font-medium text-gray-700">Advanced Filters</span>
+                {hasActiveFilters && (
+                  <button
+                    onClick={clearAllFilters}
+                    className="text-sm text-primary-600 hover:text-primary-700"
+                  >
+                    Clear all
+                  </button>
+                )}
+              </div>
+              <div className="grid grid-cols-4 gap-4">
+                {/* Min Priority Score */}
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Min Priority Score</label>
+                  <select
+                    value={minPriorityScore?.toString() || ''}
+                    onChange={(e) => setMinPriorityScore(e.target.value ? parseInt(e.target.value) : null)}
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm bg-white"
+                  >
+                    <option value="">Any</option>
+                    <option value="30">30+</option>
+                    <option value="50">50+</option>
+                    <option value="70">70+</option>
+                    <option value="80">80+</option>
+                  </select>
+                </div>
+
+                {/* Has Warm Intro */}
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Warm Intro</label>
+                  <select
+                    value={hasWarmIntroFilter === null ? '' : hasWarmIntroFilter.toString()}
+                    onChange={(e) => setHasWarmIntroFilter(e.target.value === '' ? null : e.target.value === 'true')}
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm bg-white"
+                  >
+                    <option value="">Any</option>
+                    <option value="true">Has Warm Intro</option>
+                    <option value="false">No Warm Intro</option>
+                  </select>
+                </div>
+
+                {/* Funding Stage */}
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Funding Stage</label>
+                  <select
+                    value={fundingStageFilter || ''}
+                    onChange={(e) => setFundingStageFilter(e.target.value || null)}
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm bg-white"
+                  >
+                    <option value="">Any</option>
+                    {uniqueFundingStages.map((stage) => (
+                      <option key={stage} value={stage}>
+                        {stage?.replace('_', ' ')}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Source */}
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Source</label>
+                  <select
+                    value={sourceFilter || ''}
+                    onChange={(e) => setSourceFilter(e.target.value || null)}
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm bg-white"
+                  >
+                    <option value="">Any</option>
+                    {uniqueSources.map((source) => (
+                      <option key={source} value={source}>
+                        {source}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Prospects Table */}
