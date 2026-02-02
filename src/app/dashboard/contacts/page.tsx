@@ -47,6 +47,7 @@ export default function ContactsPage() {
     let query = supabase
       .from('contacts')
       .select('*')
+      .eq('is_junk', false)  // Filter out junk contacts
       .order('proximity_score', { ascending: false });
 
     if (categoryFilter !== 'all') {

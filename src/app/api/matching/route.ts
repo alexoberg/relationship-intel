@@ -1,14 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient as createAdminClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/supabase/server';
 import Anthropic from '@anthropic-ai/sdk';
 
-const supabase = createClient(
+const supabaseAdmin = createAdminClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
-const TEAM_ID = 'aa2e0a01-03e4-419c-971a-0a80b187778f';
+
+async function getTeamId(): Promise<string | null> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  // Team membership is in team_members table, not profiles
+  const { data: membership } = await supabase
+    .from('team_members')
+    .select('team_id')
+    .eq('user_id', user.id)
+    .single();
+
+  return membership?.team_id || null;
+}
 
 async function matchWithClaude(prospect: any, contacts: any[]) {
   const contactSummaries = contacts.slice(0, 50).map(c => {
@@ -70,13 +85,18 @@ Only include contacts with relevance_score >= 50. Max 10 matches.`;
 // POST /api/matching - Run AI matching
 export async function POST(request: NextRequest) {
   try {
+    const teamId = await getTeamId();
+    if (!teamId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const body = await request.json().catch(() => ({}));
     const { prospect_id, prospect_ids } = body;
 
-    let query = supabase
+    let query = supabaseAdmin
       .from('prospects')
       .select('id, company_name, company_domain, company_industry, description')
-      .eq('team_id', TEAM_ID);
+      .eq('team_id', teamId);
 
     if (prospect_id) {
       query = query.eq('id', prospect_id);
@@ -87,10 +107,10 @@ export async function POST(request: NextRequest) {
     const { data: prospects, error: prospectError } = await query;
     if (prospectError) throw prospectError;
 
-    const { data: contacts } = await supabase
+    const { data: contacts } = await supabaseAdmin
       .from('contacts')
       .select('id, full_name, current_title, current_company, company_domain, email, linkedin_url, connection_strength, pdl_data')
-      .eq('team_id', TEAM_ID)
+      .eq('team_id', teamId)
       .not('pdl_data', 'is', null);
 
     const results = [];
@@ -105,14 +125,18 @@ export async function POST(request: NextRequest) {
         );
 
         const connScore = Math.round(best.relevance_score * (matchedContact?.connection_strength || 0.5));
-        const context = result.matches.map((m: any) => `${m.name} (${m.match_type})`).join(', ');
+        // Store Claude's reasoning with the connector names for "why this prospect" explanation
+        const contextWithReasoning = result.matches
+          .map((m: any) => `${m.name} (${m.match_type}): ${m.reasoning}`)
+          .join(' | ')
+          .substring(0, 500);
 
-        await supabase.from('prospects').update({
+        await supabaseAdmin.from('prospects').update({
           connection_score: connScore,
           has_warm_intro: connScore >= 50,
           best_connector: best.name,
           connections_count: result.matches.length,
-          connection_context: context.substring(0, 500),
+          connection_context: contextWithReasoning,
         }).eq('id', prospect.id);
 
         results.push({
@@ -135,11 +159,16 @@ export async function POST(request: NextRequest) {
 }
 
 // GET /api/matching - Get matching status
-export async function GET() {
-  const { data } = await supabase
+export async function GET(request: NextRequest) {
+  const teamId = await getTeamId();
+  if (!teamId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const { data } = await supabaseAdmin
     .from('prospects')
     .select('company_name, connection_score, connections_count, best_connector')
-    .eq('team_id', TEAM_ID)
+    .eq('team_id', teamId)
     .gt('connection_score', 0)
     .order('connection_score', { ascending: false })
     .limit(20);

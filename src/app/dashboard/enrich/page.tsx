@@ -29,6 +29,7 @@ export default function EnrichPage() {
       .from('contacts')
       .select('*')
       .eq('enriched', false)
+      .eq('is_junk', false)  // Filter out junk contacts
       .order('created_at', { ascending: false });
 
     setContacts(data || []);

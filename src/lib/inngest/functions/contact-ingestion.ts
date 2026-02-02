@@ -163,6 +163,7 @@ export const deduplicateContacts = inngest.createFunction(
 
 /**
  * Clean up junk contacts (generic mailboxes, no-reply, etc.)
+ * Marks as is_junk=true instead of deleting, for audit trail
  */
 export const cleanupJunkContacts = inngest.createFunction(
   {
@@ -174,45 +175,68 @@ export const cleanupJunkContacts = inngest.createFunction(
   async ({ event, step }) => {
     const { teamId } = event.data;
 
-    // Patterns for junk contacts
-    const junkPatterns = [
+    // Patterns for junk emails
+    const junkEmailPatterns = [
       /^(admin|info|contact|support|help|sales|hello|team|careers|jobs|hr|press|media|marketing|partnerships|billing|accounts|finance|legal|privacy|security|abuse|webmaster|postmaster|feedback|enquiries|general|office|reception)@/i,
       /^no[-_]?reply@/i,
       /^do[-_]?not[-_]?reply@/i,
       /notification|alert|automated|system|bounce|mailer[-_]?daemon/i,
-      /invoice|statement|receipt|order/i,
     ];
 
-    const result = await step.run('cleanup-contacts', async () => {
+    // Patterns for junk names (email prefixes parsed as names)
+    const junkNamePrefixes = [
+      'noreply', 'donotreply', 'no-reply', 'do-not-reply', 'newsletter',
+      'customerservice', 'customer-service', 'support', 'info', 'admin',
+      'sales', 'marketing', 'billing', 'notifications', 'alerts', 'mailer',
+      'daemon', 'postmaster', 'webmaster', 'system', 'automated', 'auto-reply',
+      'bounce', 'unsubscribe', 'feedback', 'help', 'contact', 'service'
+    ];
+
+    const result = await step.run('mark-junk-contacts', async () => {
       const { createAdminClient } = await import('@/lib/supabase/admin');
       const supabase = createAdminClient();
 
-      // Get all contacts
+      // Get all contacts not already marked as junk
       const { data: contacts } = await supabase
         .from('contacts')
-        .select('id, email')
-        .eq('team_id', teamId);
+        .select('id, email, full_name')
+        .eq('team_id', teamId)
+        .eq('is_junk', false);
 
-      if (!contacts) return { removed: 0 };
+      if (!contacts) return { marked: 0 };
 
       // Find junk contacts
       const junkIds = contacts
         .filter(c => {
-          if (!c.email) return false;
-          return junkPatterns.some(p => p.test(c.email));
+          // Check email patterns
+          if (c.email && junkEmailPatterns.some(p => p.test(c.email))) {
+            return true;
+          }
+          // Check name patterns (email prefixes parsed as names)
+          const name = (c.full_name || '').toLowerCase();
+          if (junkNamePrefixes.some(prefix => name.startsWith(prefix))) {
+            return true;
+          }
+          // Check for underscore names without spaces (like "citizensbank_customerservice")
+          if (!name.includes(' ') && name.includes('_') && name.length > 5) {
+            // But exclude real names like "john_smith" by checking for junk words
+            const hasJunkWord = junkNamePrefixes.some(jw => name.includes(jw));
+            return hasJunkWord;
+          }
+          return false;
         })
         .map(c => c.id);
 
-      if (junkIds.length === 0) return { removed: 0 };
+      if (junkIds.length === 0) return { marked: 0 };
 
-      // Delete junk contacts
+      // Mark as junk (don't delete)
       await supabase
         .from('contacts')
-        .delete()
+        .update({ is_junk: true })
         .in('id', junkIds);
 
-      console.log(`[Cleanup] Removed ${junkIds.length} junk contacts from team ${teamId}`);
-      return { removed: junkIds.length };
+      console.log(`[Cleanup] Marked ${junkIds.length} contacts as junk for team ${teamId}`);
+      return { marked: junkIds.length };
     });
 
     // Trigger PDL enrichment after cleanup
@@ -225,7 +249,7 @@ export const cleanupJunkContacts = inngest.createFunction(
 
     return {
       status: 'completed',
-      junkRemoved: result.removed,
+      junkMarked: result.marked,
     };
   }
 );
