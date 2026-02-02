@@ -265,7 +265,8 @@ Return JSON:
 );
 
 /**
- * Update priority scores based on helix fit and connections
+ * Update priority scores based on connections and company size
+ * NOTE: Does NOT overwrite helix_fit_score - that comes from manual CSV import or AI scoring
  */
 export const updatePriorityScores = inngest.createFunction(
   {
@@ -279,16 +280,19 @@ export const updatePriorityScores = inngest.createFunction(
     const { teamId } = event.data;
     const supabase = createAdminClient();
 
-    // Known high-value customers
-    const KNOWN_CUSTOMERS = [
-      'ticketmaster', 'stubhub', 'draftkings', 'fanduel', 'reddit',
-      'twitter', 'x.com', 'instagram', 'tiktok', 'roblox', 'discord',
-      'spotify', 'pinterest', 'onlyfans', 'twitch', 'youtube'
-    ];
-
-    const INDUSTRY_SCORES: Record<string, number> = {
-      'ticketing': 20, 'events': 15, 'gaming': 20, 'gambling': 25,
-      'social': 15, 'marketplace': 15, 'fintech': 15, 'e-commerce': 10, 'adult': 25,
+    // Funding stage indicates company size - smaller = easier to sell into
+    // Higher score = more accessible (seed/series_a easier than public)
+    const FUNDING_STAGE_SCORES: Record<string, number> = {
+      'seed': 25,
+      'series_a': 20,
+      'series_b': 15,
+      'series_c': 10,
+      'series_d': 8,
+      'series_e': 5,
+      'series_f': 3,
+      'series_g': 2,
+      'public': 0,
+      'acquired': 0,
     };
 
     // Get prospects and connections
@@ -316,29 +320,7 @@ export const updatePriorityScores = inngest.createFunction(
         const prospect = prospects[i];
         const conns = connectionsByProspect.get(prospect.id) || [];
 
-        // Calculate helix_fit_score
-        let helix_fit_score = 0;
-        const products = prospect.helix_products || [];
-        helix_fit_score += Math.min(products.length * 25, 60);
-
-        // Known customer bonus
-        const domain = (prospect.company_domain || '').toLowerCase();
-        const name = (prospect.company_name || '').toLowerCase();
-        if (KNOWN_CUSTOMERS.some(c => domain.includes(c) || name.includes(c))) {
-          helix_fit_score += 30;
-        }
-
-        // Industry bonus
-        const industry = (prospect.company_industry || '').toLowerCase();
-        for (const [ind, bonus] of Object.entries(INDUSTRY_SCORES)) {
-          if (industry.includes(ind)) {
-            helix_fit_score += bonus;
-            break;
-          }
-        }
-        helix_fit_score = Math.min(helix_fit_score, 100);
-
-        // Calculate connection_score
+        // Calculate connection_score based on network connections
         let connection_score = 0;
         const currentEmployees = conns.filter(c => c.relationship_type === 'current_employee');
         const alumni = conns.filter(c => c.relationship_type === 'alumni');
@@ -346,9 +328,25 @@ export const updatePriorityScores = inngest.createFunction(
         if (prospect.has_warm_intro) connection_score += 20;
         connection_score = Math.min(connection_score, 100);
 
+        // Calculate priority_score: helix_fit (kept from CSV) + connection + size accessibility
+        const helixFit = prospect.helix_fit_score || 0;
+        const fundingStage = (prospect.funding_stage || '').toLowerCase();
+        const sizeBonus = FUNDING_STAGE_SCORES[fundingStage] || 10; // default 10 for unknown
+
+        // Priority = weighted combination (helix fit most important, then connections, then size)
+        // helix_fit: 0-100 (50% weight)
+        // connection_score: 0-100 (35% weight)
+        // size accessibility: 0-25 (15% weight, normalized to 0-100)
+        const priority_score = Math.round(
+          (helixFit * 0.5) +
+          (connection_score * 0.35) +
+          ((sizeBonus / 25) * 100 * 0.15)
+        );
+
+        // Only update connection_score and priority_score, preserve helix_fit_score
         await supabase.from('prospects').update({
-          helix_fit_score,
           connection_score,
+          priority_score: Math.min(priority_score, 100),
         }).eq('id', prospect.id);
 
         updated++;
