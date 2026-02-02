@@ -683,5 +683,254 @@ Return JSON:
   }
 );
 
+/**
+ * Clean up dead/defunct companies and verify data quality
+ * - Eliminates known dead companies
+ * - Ensures all active prospects have helix_fit_reason and helix_products
+ * - Verifies and fixes connection counts
+ */
+export const cleanupProspects = inngest.createFunction(
+  {
+    id: 'cleanup-prospects',
+    name: 'Cleanup Prospects',
+    concurrency: { limit: 1, key: 'event.data.teamId' },
+    retries: 2,
+  },
+  { event: 'prospects/cleanup' },
+  async ({ event, step }) => {
+    const { teamId } = event.data;
+    const supabase = createAdminClient();
+    const anthropic = new Anthropic();
+
+    // Known dead/defunct companies
+    const DEAD_COMPANIES = [
+      'vine', 'quibi', 'mixer', 'google+', 'googleplus', 'blab', 'meerkat',
+      'periscope', 'houseparty', 'yik yak', 'yikyak', 'secret', 'path',
+      'friendster', 'myspace', 'digg', 'stumbleupon', 'del.icio.us', 'delicious',
+      'foursquare city guide', 'rdio', 'grooveshark', 'songza', 'turntable.fm',
+      'google wave', 'google reader', 'posterous', 'formspring', 'friendfeed',
+    ];
+
+    // Step 1: Get learnings for scoring
+    const learnings = await step.run('get-learnings', async () => {
+      const { data: settings } = await supabase
+        .from('team_settings')
+        .select('value')
+        .eq('team_id', teamId)
+        .eq('key', 'ai_scoring_learnings')
+        .single();
+      return settings?.value?.learnings;
+    });
+
+    // Step 2: Mark dead companies
+    const deadCount = await step.run('mark-dead-companies', async () => {
+      const { data: allProspects } = await supabase
+        .from('prospects')
+        .select('id, company_name, company_domain')
+        .eq('team_id', teamId)
+        .neq('status', 'not_a_fit');
+
+      let count = 0;
+      for (const p of allProspects || []) {
+        const nameLower = p.company_name.toLowerCase();
+        const domainLower = p.company_domain?.toLowerCase() || '';
+
+        if (DEAD_COMPANIES.some(d => nameLower.includes(d) || domainLower.includes(d))) {
+          await supabase.from('prospects').update({
+            status: 'not_a_fit',
+            helix_fit_reason: 'Company is defunct/shut down',
+            helix_fit_score: 0,
+          }).eq('id', p.id);
+          count++;
+        }
+      }
+      return count;
+    });
+
+    // Step 3: Get prospects needing scoring
+    const needsScoring = await step.run('get-needs-scoring', async () => {
+      const { data } = await supabase
+        .from('prospects')
+        .select('id, company_name, company_domain, company_industry, company_description, helix_products')
+        .eq('team_id', teamId)
+        .neq('status', 'not_a_fit')
+        .or('helix_fit_reason.is.null,helix_products.is.null,helix_products.eq.{}');
+      return data || [];
+    });
+
+    // Step 4: Score prospects in batches
+    let scored = 0;
+    let eliminated = 0;
+
+    for (let i = 0; i < needsScoring.length; i += BATCH_SIZE) {
+      const batch = needsScoring.slice(i, i + BATCH_SIZE);
+
+      await step.run(`score-batch-${Math.floor(i / BATCH_SIZE)}`, async () => {
+        const prospectInfo = batch.map(p => ({
+          id: p.id,
+          company_name: p.company_name,
+          domain: p.company_domain,
+          industry: p.company_industry || 'Unknown',
+          description: p.company_description || 'No description',
+        }));
+
+        const prompt = `You are evaluating companies for Helix's identity verification products.
+
+HELIX PRODUCTS:
+1. Bot Sorter (captcha_replacement) - Replaces CAPTCHAs. Best for: ticketing, e-commerce, account creation
+2. Voice Captcha (voice_captcha) - Voice-based verification. Best for: social platforms, dating apps, marketplaces
+3. Age Verification (age_verification) - Privacy-preserving age gates. Best for: gaming, gambling, alcohol/cannabis
+
+USER LEARNINGS TO APPLY:
+${learnings?.scoringGuidance || 'Prioritize mid-market companies in gaming, ticketing, dating. Avoid mega-tech and pure B2B SaaS.'}
+
+ALSO CHECK:
+- Is this company still operating? (If clearly defunct/shut down, mark is_fit: false)
+- Is this a real consumer-facing company that would need identity verification?
+
+Companies:
+${JSON.stringify(prospectInfo, null, 2)}
+
+Return JSON:
+{
+  "results": [
+    {
+      "id": "uuid",
+      "is_fit": true,
+      "is_dead": false,
+      "score": 70,
+      "products": ["captcha_replacement", "voice_captcha"],
+      "reason": "Specific reason why Helix products fit this company"
+    }
+  ]
+}
+
+IMPORTANT: products array must use exact values: captcha_replacement, voice_captcha, age_verification`;
+
+        try {
+          const response = await anthropic.messages.create({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 4000,
+            messages: [{ role: 'user', content: prompt }],
+          });
+
+          const text = response.content[0].type === 'text' ? response.content[0].text : '';
+          const jsonMatch = text.match(/\{[\s\S]*\}/);
+
+          if (jsonMatch) {
+            const results = JSON.parse(jsonMatch[0]).results;
+
+            for (const result of results) {
+              if (result.is_fit === false || result.is_dead === true) {
+                await supabase.from('prospects').update({
+                  status: 'not_a_fit',
+                  helix_fit_score: 0,
+                  helix_fit_reason: result.is_dead ? 'Company appears defunct' : (result.reason || 'No clear Helix fit'),
+                  helix_products: [],
+                }).eq('id', result.id);
+                eliminated++;
+              } else {
+                const products = (result.products || []).map((p: string) => {
+                  const lower = p.toLowerCase();
+                  if (lower.includes('bot') || lower === 'captcha_replacement') return 'captcha_replacement';
+                  if (lower.includes('voice') || lower === 'voice_captcha') return 'voice_captcha';
+                  if (lower.includes('age') || lower === 'age_verification') return 'age_verification';
+                  return null;
+                }).filter(Boolean);
+
+                await supabase.from('prospects').update({
+                  helix_fit_score: result.score || 60,
+                  helix_fit_reason: result.reason,
+                  helix_products: products.length > 0 ? products : ['captcha_replacement'],
+                }).eq('id', result.id);
+                scored++;
+              }
+            }
+          }
+        } catch (err: any) {
+          console.error(`Batch error: ${err.message}`);
+        }
+      });
+
+      await step.sleep('rate-limit', '1s');
+    }
+
+    // Step 5: Verify connections
+    const connectionStats = await step.run('verify-connections', async () => {
+      // Get all prospect_connections
+      const { data: connections } = await supabase
+        .from('prospect_connections')
+        .select('id, prospect_id')
+        .limit(5000);
+
+      // Get all valid prospect IDs (active prospects only)
+      const { data: validProspects } = await supabase
+        .from('prospects')
+        .select('id')
+        .eq('team_id', teamId)
+        .neq('status', 'not_a_fit');
+
+      const validProspectIds = new Set((validProspects || []).map(p => p.id));
+
+      // Find and delete orphaned connections
+      let orphanedCount = 0;
+      for (const conn of connections || []) {
+        if (!validProspectIds.has(conn.prospect_id)) {
+          await supabase.from('prospect_connections').delete().eq('id', conn.id);
+          orphanedCount++;
+        }
+      }
+
+      // Update connection counts
+      const { data: prospectsWithConns } = await supabase
+        .from('prospects')
+        .select(`id, connections_count, prospect_connections (id)`)
+        .eq('team_id', teamId)
+        .neq('status', 'not_a_fit');
+
+      let updatedCounts = 0;
+      for (const p of prospectsWithConns || []) {
+        const actualCount = (p.prospect_connections || []).length;
+        if (p.connections_count !== actualCount) {
+          await supabase.from('prospects').update({
+            connections_count: actualCount,
+            has_warm_intro: actualCount > 0,
+          }).eq('id', p.id);
+          updatedCounts++;
+        }
+      }
+
+      return { orphanedDeleted: orphanedCount, countsUpdated: updatedCounts };
+    });
+
+    // Final stats
+    const finalStats = await step.run('final-stats', async () => {
+      const { count: active } = await supabase
+        .from('prospects')
+        .select('*', { count: 'exact', head: true })
+        .eq('team_id', teamId)
+        .neq('status', 'not_a_fit');
+
+      const { count: withReason } = await supabase
+        .from('prospects')
+        .select('*', { count: 'exact', head: true })
+        .eq('team_id', teamId)
+        .neq('status', 'not_a_fit')
+        .not('helix_fit_reason', 'is', null);
+
+      return { activeProspects: active, withFitReason: withReason };
+    });
+
+    return {
+      status: 'success',
+      deadCompaniesRemoved: deadCount,
+      prospectsScored: scored,
+      prospectsEliminated: eliminated,
+      connections: connectionStats,
+      final: finalStats,
+    };
+  }
+);
+
 // Export all functions
-export const functions = [syncWarmIntros, scoreHelixFit, updatePriorityScores, learnFromFeedback];
+export const functions = [syncWarmIntros, scoreHelixFit, updatePriorityScores, learnFromFeedback, cleanupProspects];
