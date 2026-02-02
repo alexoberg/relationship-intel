@@ -174,6 +174,8 @@ export const syncWarmIntros = inngest.createFunction(
 
 /**
  * AI-powered Helix product fit scoring
+ * Generates specific reasons why Helix products fit each prospect
+ * Marks prospects as "not_a_fit" if no clear product fit can be identified
  */
 export const scoreHelixFit = inngest.createFunction(
   {
@@ -188,12 +190,13 @@ export const scoreHelixFit = inngest.createFunction(
     const supabase = createAdminClient();
     const anthropic = new Anthropic();
 
-    // Get prospects needing scoring
+    // Get prospects needing scoring (no reason yet)
     const prospects = await step.run('get-prospects', async () => {
       const { data } = await supabase
         .from('prospects')
         .select('*')
         .eq('team_id', teamId)
+        .neq('status', 'not_a_fit')
         .or('helix_fit_reason.is.null,helix_fit_reason.eq.');
       return data || [];
     });
@@ -203,7 +206,8 @@ export const scoreHelixFit = inngest.createFunction(
     }
 
     let processed = 0;
-    let withProducts = 0;
+    let withFit = 0;
+    let markedNotFit = 0;
 
     // Process in batches
     for (let i = 0; i < prospects.length; i += BATCH_SIZE) {
@@ -215,23 +219,35 @@ export const scoreHelixFit = inngest.createFunction(
           company_name: p.company_name,
           domain: p.company_domain,
           industry: p.company_industry,
-          description: p.company_description || 'No description',
+          description: p.description || p.company_description || 'No description',
         }));
 
-        const prompt = `Analyze these companies for Helix product fit:
+        const prompt = `You are evaluating companies for Helix's identity verification products. Be specific about WHY each product fits.
 
-1. **Captcha Replacement** - Bot protection replacing CAPTCHAs (e-commerce, ticketing, fintech)
-2. **Voice Captcha** - Unique human verification (social platforms, marketplaces, dating)
-3. **Age Verification** - Privacy-preserving age gates (gaming, gambling, adult content)
+HELIX PRODUCTS:
+1. **Bot Sorter** - Replaces CAPTCHAs with frictionless bot detection. Best for: ticketing (anti-scalping), e-commerce (checkout fraud), account creation flows
+2. **Voice Captcha** - Unique voice-based human verification. Best for: social platforms (fake account prevention), dating apps (authenticity), marketplaces (trust)
+3. **Age Verification** - Privacy-preserving age gates without collecting DOB. Best for: gaming (age-gated content), gambling, alcohol/cannabis, adult content
+
+For each company, determine:
+- Which specific Helix product(s) fit and WHY (be specific about the use case)
+- If NO clear fit exists, set is_fit to false
 
 Companies: ${JSON.stringify(prospectInfo, null, 2)}
 
 Return JSON:
 {
   "results": [
-    {"id": "uuid", "products": ["captcha_replacement"], "reason": "Brief explanation"}
+    {
+      "id": "uuid",
+      "is_fit": true,
+      "products": ["bot_sorter"],
+      "reason": "Specific explanation of why this product fits their business"
+    }
   ]
-}`;
+}
+
+Be honest - if you can't articulate a specific use case, set is_fit to false.`;
 
         const response = await anthropic.messages.create({
           model: 'claude-sonnet-4-20250514',
@@ -246,13 +262,32 @@ Return JSON:
         const results = JSON.parse(jsonMatch[0]).results;
 
         for (const result of results) {
-          await supabase.from('prospects').update({
-            helix_products: result.products || [],
-            helix_fit_reason: result.reason || 'No specific Helix product fit identified',
-          }).eq('id', result.id);
+          if (result.is_fit === false) {
+            // Mark as not a fit - remove from active prospects
+            await supabase.from('prospects').update({
+              status: 'not_a_fit',
+              helix_fit_reason: 'No clear Helix product fit identified',
+              helix_fit_score: 0,
+              helix_products: [],
+            }).eq('id', result.id);
+            markedNotFit++;
+          } else {
+            // Map product names to our internal format
+            const products = (result.products || []).map((p: string) => {
+              const lower = p.toLowerCase();
+              if (lower.includes('bot') || lower.includes('captcha_replacement')) return 'captcha_replacement';
+              if (lower.includes('voice')) return 'voice_captcha';
+              if (lower.includes('age')) return 'age_verification';
+              return p;
+            });
 
+            await supabase.from('prospects').update({
+              helix_products: products,
+              helix_fit_reason: result.reason,
+            }).eq('id', result.id);
+            withFit++;
+          }
           processed++;
-          if (result.products?.length > 0) withProducts++;
         }
       });
 
@@ -260,7 +295,7 @@ Return JSON:
       await step.sleep('rate-limit', '1s');
     }
 
-    return { status: 'success', processed, withProducts };
+    return { status: 'success', processed, withFit, markedNotFit };
   }
 );
 
