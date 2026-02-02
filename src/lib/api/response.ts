@@ -59,9 +59,9 @@ export const errors = {
 /**
  * Wrap an async handler with standardized error handling
  */
-export function withErrorHandling<T>(
-  handler: () => Promise<NextResponse<ApiResponse<T>>>
-): Promise<NextResponse<ApiResponse<T>>> {
+export function withErrorHandling(
+  handler: () => Promise<NextResponse>
+): Promise<NextResponse> {
   return handler().catch((err) => {
     console.error('API Error:', err);
     return errors.internal(err instanceof Error ? err.message : 'Unknown error');
