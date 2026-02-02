@@ -24,8 +24,8 @@ interface ProspectConnection {
   target_name: string;
   target_title: string | null;
   connector_name: string;
-  connection_strength: number;
-  shared_context: string | null;
+  relationship_strength: number;
+  connection_context: string | null;
 }
 
 interface Prospect {
@@ -406,8 +406,8 @@ export default function ProspectReviewPage() {
                         <span className="text-gray-400 font-normal text-sm">({bestConnection.target_title})</span>
                       )}
                     </div>
-                    {bestConnection.shared_context && (
-                      <p className="text-sm text-gray-400 mt-2">{bestConnection.shared_context}</p>
+                    {bestConnection.connection_context && (
+                      <p className="text-sm text-gray-400 mt-2">{bestConnection.connection_context}</p>
                     )}
                   </div>
                 )}

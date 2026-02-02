@@ -62,8 +62,8 @@ export async function GET(request: NextRequest) {
         target_name,
         target_title,
         connector_name,
-        connection_strength,
-        shared_context
+        relationship_strength,
+        connection_context
       )
     `)
     .eq('team_id', membership.team_id)
