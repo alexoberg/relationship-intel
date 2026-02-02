@@ -161,27 +161,40 @@ export default function ProspectsPage() {
   };
 
   const handleFeedback = async (prospectId: string, isGoodFit: boolean) => {
-    await supabase
-      .from('prospects')
-      .update({ 
-        is_good_fit: isGoodFit, 
-        feedback_notes: feedbackNotes,
-        status: isGoodFit ? 'researching' : 'not_a_fit'
-      })
-      .eq('id', prospectId);
+    // Use the feedback API so it saves to prospect_feedback table for AI learning
+    try {
+      const response = await fetch('/api/prospects/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prospectId,
+          isGoodFit,
+          feedbackReason: feedbackNotes || null,
+        }),
+      });
 
-    setProspects((prev) =>
-      prev.map((p) =>
-        p.id === prospectId
-          ? { ...p, is_good_fit: isGoodFit, feedback_notes: feedbackNotes, status: isGoodFit ? 'researching' : 'not_a_fit' }
-          : p
-      )
-    );
+      if (!response.ok) {
+        console.error('Failed to save feedback');
+        return;
+      }
 
-    if (selectedProspect?.id === prospectId) {
-      setSelectedProspect((prev) =>
-        prev ? { ...prev, is_good_fit: isGoodFit, feedback_notes: feedbackNotes, status: isGoodFit ? 'researching' : 'not_a_fit' } : null
+      const newStatus = isGoodFit ? 'researching' : 'not_a_fit';
+
+      setProspects((prev) =>
+        prev.map((p) =>
+          p.id === prospectId
+            ? { ...p, is_good_fit: isGoodFit, feedback_notes: feedbackNotes, status: newStatus }
+            : p
+        )
       );
+
+      if (selectedProspect?.id === prospectId) {
+        setSelectedProspect((prev) =>
+          prev ? { ...prev, is_good_fit: isGoodFit, feedback_notes: feedbackNotes, status: newStatus } : null
+        );
+      }
+    } catch (error) {
+      console.error('Failed to submit feedback:', error);
     }
   };
 

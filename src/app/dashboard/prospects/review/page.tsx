@@ -194,8 +194,36 @@ export default function ProspectReviewPage() {
     moveToNext();
   };
 
-  const handleUndo = () => {
+  const handleUndo = async () => {
     if (reviewHistory.length === 0 || currentIndex === 0) return;
+
+    const lastAction = reviewHistory[reviewHistory.length - 1];
+
+    // Only revert database for actual feedback actions (not skips)
+    if (lastAction.action !== 'skip') {
+      try {
+        // Revert the prospect in the database
+        const response = await fetch('/api/prospects/feedback/undo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prospectId: lastAction.prospectId,
+          }),
+        });
+
+        if (response.ok) {
+          // Update stats
+          setStats(prev => ({
+            ...prev,
+            reviewed: prev.reviewed - 1,
+            unreviewed: prev.unreviewed + 1,
+          }));
+        }
+      } catch (error) {
+        console.error('Failed to undo:', error);
+      }
+    }
+
     setReviewHistory(prev => prev.slice(0, -1));
     setCurrentIndex(prev => Math.max(0, prev - 1));
   };
