@@ -28,8 +28,10 @@ import {
 interface Prospect {
   id: string;
   team_id: string;
-  name: string;
+  company_name: string;
   company_domain: string;
+  company_industry?: string | null;
+  description?: string | null;
   linkedin_url: string | null;
   stage_fit: number | null;
   urgency_signals: number | null;
@@ -217,7 +219,7 @@ export default function ProspectsPage() {
 
   const filteredProspects = prospects.filter((p) =>
     search
-      ? p.name?.toLowerCase().includes(search.toLowerCase()) ||
+      ? p.company_name?.toLowerCase().includes(search.toLowerCase()) ||
         p.company_domain?.toLowerCase().includes(search.toLowerCase())
       : true
   );
@@ -313,8 +315,7 @@ export default function ProspectsPage() {
                 <thead className="bg-gray-50 sticky top-0">
                   <tr>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Company</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Stage Fit</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Urgency</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-600 max-w-[200px]">Why Helix</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Connections</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Priority</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Status</th>
@@ -331,15 +332,19 @@ export default function ProspectsPage() {
                     >
                       <td className="px-4 py-3">
                         <div>
-                          <p className="font-medium text-gray-900">{prospect.name}</p>
+                          <p className="font-medium text-gray-900">{prospect.company_name}</p>
                           <p className="text-sm text-gray-500">{prospect.company_domain}</p>
+                          {prospect.funding_stage && (
+                            <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded capitalize">
+                              {prospect.funding_stage.replace('_', ' ')}
+                            </span>
+                          )}
                         </div>
                       </td>
-                      <td className="px-4 py-3">
-                        <ScoreBadge score={prospect.stage_fit || 0} label="Fit" />
-                      </td>
-                      <td className="px-4 py-3">
-                        <ScoreBadge score={prospect.urgency_signals || 0} label="Urgency" />
+                      <td className="px-4 py-3 max-w-[200px]">
+                        <p className="text-xs text-gray-600 line-clamp-2">
+                          {prospect.helix_fit_reason || '—'}
+                        </p>
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
@@ -370,7 +375,7 @@ export default function ProspectsPage() {
           <div className="p-6 border-b border-gray-100">
             <div className="flex items-start justify-between">
               <div>
-                <h2 className="text-xl font-semibold text-gray-900">{selectedProspect.name}</h2>
+                <h2 className="text-xl font-semibold text-gray-900">{selectedProspect.company_name}</h2>
                 <a
                   href={`https://${selectedProspect.company_domain}`}
                   target="_blank"
@@ -380,6 +385,9 @@ export default function ProspectsPage() {
                   {selectedProspect.company_domain}
                   <ExternalLink className="w-3 h-3" />
                 </a>
+                {selectedProspect.company_industry && (
+                  <span className="text-xs text-gray-500 mt-1 block">{selectedProspect.company_industry}</span>
+                )}
               </div>
               <button onClick={() => setSelectedProspect(null)} className="p-1 hover:bg-gray-100 rounded">
                 <X className="w-5 h-5 text-gray-400" />
@@ -388,6 +396,17 @@ export default function ProspectsPage() {
           </div>
 
           <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            {/* Description */}
+            {selectedProspect.description && (
+              <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <Building className="w-4 h-4 inline mr-1" />
+                  About
+                </label>
+                <p className="text-sm text-gray-600">{selectedProspect.description}</p>
+              </div>
+            )}
+
             {/* Priority Score */}
             <div className="p-4 bg-gradient-to-br from-primary-50 to-primary-100 rounded-xl border border-primary-200">
               <div className="flex items-center justify-between mb-2">

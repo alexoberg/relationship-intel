@@ -65,69 +65,120 @@ async function main() {
   }
   console.log('✅ PDL API working\n');
 
-  // Get unenriched contacts with linkedin or email
-  const { data: contacts, error } = await supabase
+  // Get total count first
+  const { count: totalCount } = await supabase
     .from('contacts')
-    .select('id, email, linkedin_url, full_name, current_company, current_title')
+    .select('*', { count: 'exact', head: true })
     .eq('team_id', TEAM_ID)
-    .is('pdl_enriched_at', null)
-    .order('connection_strength', { ascending: false })
-    .limit(50); // Start with 50
+    .is('pdl_enriched_at', null);
 
-  if (error) {
-    console.log(`❌ Error: ${error.message}`);
-    return;
-  }
-
-  console.log(`Found ${contacts?.length || 0} contacts to enrich\n`);
+  console.log(`Total contacts to enrich: ${totalCount}\n`);
 
   let enriched = 0, notFound = 0, errors = 0;
+  let offset = 0;
+  const batchSize = 100;
 
-  for (const contact of contacts || []) {
-    try {
-      let result = null;
+  while (offset < 10000) {
+    // Get unenriched contacts with linkedin or email
+    const { data: contacts, error } = await supabase
+      .from('contacts')
+      .select('id, email, linkedin_url, full_name, current_company, current_title')
+      .eq('team_id', TEAM_ID)
+      .is('pdl_enriched_at', null)
+      .order('connection_strength', { ascending: false, nullsFirst: false })
+      .limit(batchSize);
 
-      // Try LinkedIn first
-      if (contact.linkedin_url) {
-        const cleanUrl = normalizeLinkedInUrl(contact.linkedin_url);
-        result = await enrichPerson({ profile: cleanUrl });
-      }
-      
-      // Fallback to email
-      if (!result?.success && contact.email) {
-        result = await enrichPerson({ email: contact.email });
-      }
-
-      if (result?.success && result.person) {
-        const p = result.person;
-        await supabase.from('contacts').update({
-          pdl_id: p.id,
-          email: contact.email || p.work_email || p.personal_emails?.[0],
-          current_title: p.job_title || contact.current_title,
-          current_company: p.job_company_name || contact.current_company,
-          linkedin_url: p.linkedin_url || contact.linkedin_url,
-          pdl_enriched_at: new Date().toISOString(),
-        }).eq('id', contact.id);
-
-        enriched++;
-        console.log(`✅ ${contact.full_name} → ${p.job_title} @ ${p.job_company_name}`);
-      } else {
-        await supabase.from('contacts').update({
-          pdl_enriched_at: new Date().toISOString(),
-        }).eq('id', contact.id);
-        notFound++;
-      }
-
-      // Rate limit (10/sec for PDL)
-      await new Promise(r => setTimeout(r, 120));
-
-    } catch (err) {
-      console.log(`❌ ${contact.full_name}: ${err.message}`);
-      errors++;
+    if (error) {
+      console.log(`❌ Error: ${error.message}`);
+      return;
     }
+
+    if (!contacts || contacts.length === 0) {
+      console.log('No more contacts to process');
+      break;
+    }
+
+    const total = enriched + notFound + errors;
+    console.log(`\n📦 Batch: Processing ${contacts.length} contacts (${total}/${totalCount} total)`);
+
+    for (const contact of contacts) {
+      try {
+        let result = null;
+
+        // Try LinkedIn first
+        if (contact.linkedin_url) {
+          const cleanUrl = normalizeLinkedInUrl(contact.linkedin_url);
+          result = await enrichPerson({ profile: cleanUrl });
+        }
+        
+        // Fallback to email
+        if (!result?.success && contact.email) {
+          result = await enrichPerson({ email: contact.email });
+        }
+
+        if (result?.success && result.person) {
+          const p = result.person;
+
+          // Save ALL the PDL data to avoid re-fetching
+          const updateData = {
+            pdl_id: p.id,
+            email: contact.email || p.work_email || p.personal_emails?.[0],
+            current_title: p.job_title || contact.current_title,
+            current_company: p.job_company_name || contact.current_company,
+            company_domain: p.job_company_website?.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0] || null,
+            linkedin_url: p.linkedin_url || contact.linkedin_url,
+            location: p.location_name || null,
+            // Store full PDL response for work history access
+            pdl_data: {
+              experience: p.experience || [],
+              education: p.education || [],
+              skills: p.skills || [],
+              interests: p.interests || [],
+              industry: p.industry || null,
+              job_start_date: p.job_start_date || null,
+              inferred_salary: p.inferred_salary || null,
+              summary: p.summary || null,
+            },
+            pdl_enriched_at: new Date().toISOString(),
+          };
+
+          const { error: updateError } = await supabase
+            .from('contacts')
+            .update(updateData)
+            .eq('id', contact.id);
+
+          if (updateError) {
+            console.log(`⚠️ ${contact.full_name}: Save failed - ${updateError.message}`);
+            errors++;
+          } else {
+            enriched++;
+            const expCount = p.experience?.length || 0;
+            console.log(`✅ ${contact.full_name} → ${p.job_title} @ ${p.job_company_name} (${expCount} jobs)`);
+          }
+        } else {
+          await supabase.from('contacts').update({
+            pdl_enriched_at: new Date().toISOString(),
+          }).eq('id', contact.id);
+          notFound++;
+        }
+
+        // Rate limit (10/sec for PDL)
+        await new Promise(r => setTimeout(r, 120));
+
+      } catch (err) {
+        console.log(`❌ ${contact.full_name}: ${err.message}`);
+        errors++;
+      }
+    }
+
+    offset += contacts.length;
+
+    // Progress update
+    const pct = Math.round(((enriched + notFound + errors) / totalCount) * 100);
+    console.log(`\n📊 Progress: ${pct}% - Enriched: ${enriched} | Not found: ${notFound} | Errors: ${errors}`);
   }
 
-  console.log(`\n📊 RESULTS:`);
+  console.log(`\n✅ PDL ENRICHMENT COMPLETE:`);
   console.log(`   Enriched: ${enriched}`);
   console.log(`   Not found: ${notFound}`);
   console.log(`   Errors: ${errors}`);
