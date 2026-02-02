@@ -29,12 +29,13 @@ export const syncWarmIntros = inngest.createFunction(
       return data || [];
     });
 
-    // Step 2: Get all contacts with job history
+    // Step 2: Get all contacts with job history (exclude junk)
     const contacts = await step.run('get-contacts', async () => {
       const { data } = await supabase
         .from('contacts')
         .select('id, full_name, current_company, company_domain, job_history, best_connector, connection_strength, linkedin_url, email')
-        .eq('team_id', teamId);
+        .eq('team_id', teamId)
+        .or('is_junk.is.null,is_junk.eq.false'); // Exclude junk contacts
       return data || [];
     });
 

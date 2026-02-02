@@ -108,6 +108,44 @@ async function fetchSwarmNetwork(
 }
 
 // ============================================
+// JUNK EMAIL DETECTION
+// ============================================
+
+const JUNK_EMAIL_PATTERNS = [
+  'noreply',
+  'no-reply',
+  'donotreply',
+  'do-not-reply',
+  'notifications@',
+  'mailer-daemon',
+  'postmaster@',
+  'bounce@',
+  'auto-reply',
+  'autoreply',
+  'unsubscribe@',
+  'feedback@',
+  'support@',
+  'info@',
+  'hello@',
+  'contact@',
+  'team@',
+  'news@',
+  'newsletter@',
+  'updates@',
+  'alerts@',
+  'notification@',
+];
+
+/**
+ * Check if an email is a junk/automated email that should be filtered out
+ */
+function isJunkEmail(email: string | null | undefined): boolean {
+  if (!email) return false;
+  const lower = email.toLowerCase();
+  return JUNK_EMAIL_PATTERNS.some(pattern => lower.includes(pattern));
+}
+
+// ============================================
 // CONTACT INGESTION
 // ============================================
 
@@ -181,6 +219,10 @@ export async function ingestSwarmContacts(
           ? Math.max(...item.connections.map(c => c.connection_strength))
           : 0;
 
+        // Skip junk emails
+        const email = item.profile.work_email || null;
+        const isJunk = isJunkEmail(email);
+
         // Contact data - includes both owner_id (required) and team_id
         const contactData = {
           owner_id: ownerId,
@@ -189,7 +231,7 @@ export async function ingestSwarmContacts(
           full_name: item.profile.full_name,
           first_name: firstName,
           last_name: lastName,
-          email: item.profile.work_email || null,
+          email: email,
           linkedin_url: item.profile.linkedin_url || null,
           current_title: item.profile.current_title || null,
           current_company: item.profile.current_company_name || null,
@@ -197,6 +239,7 @@ export async function ingestSwarmContacts(
           source: 'swarm' as const,
           connection_strength: bestStrength,
           swarm_synced_at: new Date().toISOString(),
+          is_junk: isJunk, // Mark junk emails
         };
 
         // Check if contact exists (by swarm_profile_id within team)
