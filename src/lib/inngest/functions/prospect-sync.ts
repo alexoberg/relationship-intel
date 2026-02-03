@@ -412,7 +412,7 @@ export const runProspectPipeline = inngest.createFunction(
         .eq('id', prospectId)
         .single();
 
-      if (!prospect) return { success: false, error: 'Prospect not found' };
+      if (!prospect) return { success: false as const, error: 'Prospect not found', companyName: undefined, industry: undefined };
 
       const result = await enrichCompanyByDomain(prospect.company_domain);
 
@@ -445,13 +445,13 @@ export const runProspectPipeline = inngest.createFunction(
           .eq('id', prospectId);
 
         return {
-          success: true,
+          success: true as const,
           companyName: result.company.display_name || result.company.name,
           industry: result.company.industry,
         };
       }
 
-      return { success: false, error: result.error };
+      return { success: false as const, error: result.error, companyName: undefined, industry: undefined };
     });
 
     // Step 1: Score Helix fit
