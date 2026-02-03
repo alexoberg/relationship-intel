@@ -121,6 +121,7 @@ export default function ProspectsPage() {
   const [domainInput, setDomainInput] = useState('');
   const [addingDomain, setAddingDomain] = useState(false);
   const [addDomainResult, setAddDomainResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const supabase = createClient();
 
@@ -249,6 +250,7 @@ export default function ProspectsPage() {
 
   const handleSyncConnections = async () => {
     setSyncing(true);
+    setStatusMessage(null);
     try {
       const response = await fetch('/api/prospects', {
         method: 'POST',
@@ -256,12 +258,23 @@ export default function ProspectsPage() {
         body: JSON.stringify({ action: 'sync-swarm' }),
       });
       if (response.ok) {
+        const data = await response.json();
+        const prospectsUpdated = data?.data?.prospectsUpdated || 0;
+        setStatusMessage({
+          type: 'success',
+          text: `Sync complete! ${prospectsUpdated} prospects updated with connections.`,
+        });
         await loadProspects();
+      } else {
+        setStatusMessage({ type: 'error', text: 'Failed to sync connections' });
       }
     } catch (error) {
       console.error('Sync failed:', error);
+      setStatusMessage({ type: 'error', text: 'Network error during sync' });
     }
     setSyncing(false);
+    // Clear message after 8 seconds
+    setTimeout(() => setStatusMessage(null), 8000);
   };
 
   const handleAddByDomain = async (e: React.FormEvent) => {
@@ -539,6 +552,30 @@ export default function ProspectsPage() {
             </button>
           </div>
         </div>
+
+        {/* Status Message */}
+        {statusMessage && (
+          <div
+            className={`mb-4 p-4 rounded-lg flex items-center gap-3 ${
+              statusMessage.type === 'success'
+                ? 'bg-green-50 border border-green-200 text-green-700'
+                : 'bg-red-50 border border-red-200 text-red-700'
+            }`}
+          >
+            {statusMessage.type === 'success' ? (
+              <CheckCircle className="w-5 h-5" />
+            ) : (
+              <AlertCircle className="w-5 h-5" />
+            )}
+            <span className="font-medium">{statusMessage.text}</span>
+            <button
+              onClick={() => setStatusMessage(null)}
+              className="ml-auto p-1 hover:bg-white/50 rounded"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
 
         {/* Filters */}
         <div className="space-y-3 mb-6">

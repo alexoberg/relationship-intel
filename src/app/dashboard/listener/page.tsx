@@ -100,6 +100,7 @@ export default function ListenerPage() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [sourceFilter, setSourceFilter] = useState('all');
   const [selectedDiscovery, setSelectedDiscovery] = useState<Discovery | null>(null);
+  const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const supabase = createClient();
 
@@ -166,13 +167,34 @@ export default function ListenerPage() {
       });
 
       if (res.ok) {
-        // Reload after a short delay
-        setTimeout(loadData, 2000);
+        const data = await res.json();
+        // Show success message
+        setStatusMessage({
+          type: 'success',
+          text: `${source.toUpperCase()} scan started! Results will appear shortly.`,
+        });
+
+        // Keep the scanning state for 5 seconds to indicate background work has started
+        setTimeout(() => {
+          if (source === 'hn') setTriggeringHN(false);
+          else setTriggeringRSS(false);
+          loadData(); // Refresh the data
+        }, 5000);
+
+        // Clear message after 10 seconds
+        setTimeout(() => setStatusMessage(null), 10000);
+        return; // Don't reset state immediately
+      } else {
+        setStatusMessage({ type: 'error', text: `Failed to start ${source.toUpperCase()} scan` });
+        setTimeout(() => setStatusMessage(null), 5000);
       }
     } catch (error) {
       console.error('Failed to trigger scan:', error);
+      setStatusMessage({ type: 'error', text: `Failed to start ${source.toUpperCase()} scan` });
+      setTimeout(() => setStatusMessage(null), 5000);
     }
 
+    // Only reset on error
     if (source === 'hn') setTriggeringHN(false);
     else if (source === 'hn_profiles') setTriggeringProfiles(false);
     else setTriggeringRSS(false);
@@ -275,6 +297,30 @@ export default function ListenerPage() {
             </button>
           </div>
         </div>
+
+        {/* Status Message */}
+        {statusMessage && (
+          <div
+            className={`mb-4 p-4 rounded-lg flex items-center gap-3 ${
+              statusMessage.type === 'success'
+                ? 'bg-green-50 border border-green-200 text-green-700'
+                : 'bg-red-50 border border-red-200 text-red-700'
+            }`}
+          >
+            {statusMessage.type === 'success' ? (
+              <CheckCircle className="w-5 h-5" />
+            ) : (
+              <AlertCircle className="w-5 h-5" />
+            )}
+            <span className="font-medium">{statusMessage.text}</span>
+            <button
+              onClick={() => setStatusMessage(null)}
+              className="ml-auto p-1 hover:bg-white/50 rounded"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
 
         {/* Stats Cards */}
         {stats && (
@@ -404,7 +450,7 @@ export default function ListenerPage() {
                         <StatusBadge status={discovery.status} />
                       </td>
                       <td className="px-4 py-3">
-                        {discovery.status === 'new' && (
+                        {discovery.status === 'new' ? (
                           <div className="flex gap-1">
                             <button
                               onClick={(e) => { e.stopPropagation(); handlePromote(discovery.id); }}
@@ -421,6 +467,8 @@ export default function ListenerPage() {
                               <ThumbsDown className="w-4 h-4" />
                             </button>
                           </div>
+                        ) : (
+                          <span className="text-xs text-gray-400">—</span>
                         )}
                       </td>
                     </tr>

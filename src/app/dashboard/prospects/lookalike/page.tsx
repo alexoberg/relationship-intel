@@ -113,7 +113,7 @@ export default function LookalikePage() {
       const data: LookalikeResponse = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.seeds?.toString() || 'Failed to generate lookalikes');
+        throw new Error((data as { error?: string }).error || 'Failed to generate lookalikes');
       }
 
       setLookalikes(data.lookalikes);

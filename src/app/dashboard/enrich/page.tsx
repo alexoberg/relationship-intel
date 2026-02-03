@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { Contact } from '@/types/database';
-import { Sparkles, Play, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
+import { Sparkles, Play, CheckCircle, AlertCircle, Loader2, Tag, RefreshCw } from 'lucide-react';
 
 export default function EnrichPage() {
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -15,11 +15,19 @@ export default function EnrichPage() {
     categorized: number;
     errors: string[];
   } | null>(null);
+  const [categorizing, setCategorizing] = useState(false);
+  const [categorizationResults, setCategorizationResults] = useState<{
+    processed: number;
+    categorized: number;
+    breakdown: { ruleBased: number; helixSales: number; skipped: number };
+  } | null>(null);
+  const [uncategorizedCount, setUncategorizedCount] = useState(0);
 
   const supabase = createClient();
 
   useEffect(() => {
     loadUnenrichedContacts();
+    loadUncategorizedCount();
   }, []);
 
   const loadUnenrichedContacts = async () => {
@@ -34,6 +42,45 @@ export default function EnrichPage() {
 
     setContacts(data || []);
     setLoading(false);
+  };
+
+  const loadUncategorizedCount = async () => {
+    const { count } = await supabase
+      .from('contacts')
+      .select('*', { count: 'exact', head: true })
+      .eq('category', 'uncategorized')
+      .eq('is_junk', false);
+
+    setUncategorizedCount(count || 0);
+  };
+
+  const handleCategorizeAll = async () => {
+    setCategorizing(true);
+    setCategorizationResults(null);
+
+    try {
+      const response = await fetch('/api/categorize/all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ batchSize: 1000 }),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setCategorizationResults({
+          processed: result.data.processed,
+          categorized: result.data.categorized,
+          breakdown: result.data.breakdown,
+        });
+        // Refresh the count
+        loadUncategorizedCount();
+      }
+    } catch (error) {
+      console.error('Categorization failed:', error);
+    }
+
+    setCategorizing(false);
   };
 
   const handleEnrich = async () => {
@@ -248,6 +295,70 @@ export default function EnrichPage() {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Categorization Card */}
+      <div className="bg-white rounded-xl border border-gray-200 p-8 mt-8">
+        <div className="flex items-start gap-4 mb-6">
+          <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+            <Tag className="w-6 h-6 text-green-600" />
+          </div>
+          <div className="flex-1">
+            <h2 className="text-lg font-semibold text-gray-900">
+              Categorize Contacts
+            </h2>
+            <p className="text-gray-600 mt-1">
+              Run rule-based categorization on {uncategorizedCount.toLocaleString()} uncategorized contacts.
+              This identifies VCs, Angels, and Sales Prospects based on job titles and company data.
+            </p>
+          </div>
+        </div>
+
+        {/* Categorization Results */}
+        {categorizationResults && (
+          <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+            <div className="flex items-center gap-2 mb-2">
+              <CheckCircle className="w-5 h-5 text-green-500" />
+              <span className="font-medium text-green-800">
+                Categorization complete
+              </span>
+            </div>
+            <div className="text-sm text-green-700 space-y-1">
+              <p>Processed {categorizationResults.processed} contacts</p>
+              <p className="font-semibold">Categorized {categorizationResults.categorized}:</p>
+              <ul className="ml-4 list-disc">
+                <li>{categorizationResults.breakdown.ruleBased} by rules (VC, Angel)</li>
+                <li>{categorizationResults.breakdown.helixSales} as Helix sales prospects</li>
+                <li>{categorizationResults.breakdown.skipped} still uncategorized (need more data)</li>
+              </ul>
+            </div>
+          </div>
+        )}
+
+        {/* Action Button */}
+        <button
+          onClick={handleCategorizeAll}
+          disabled={categorizing || uncategorizedCount === 0}
+          className="flex items-center gap-2 bg-green-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {categorizing ? (
+            <>
+              <Loader2 className="w-5 h-5 animate-spin" />
+              Categorizing...
+            </>
+          ) : (
+            <>
+              <RefreshCw className="w-5 h-5" />
+              Categorize All ({uncategorizedCount.toLocaleString()} contacts)
+            </>
+          )}
+        </button>
+
+        {uncategorizedCount === 0 && !loading && (
+          <p className="mt-4 text-sm text-gray-500">
+            All contacts have been categorized. Great job!
+          </p>
+        )}
       </div>
     </div>
   );
