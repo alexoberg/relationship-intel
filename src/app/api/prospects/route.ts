@@ -174,9 +174,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
+    // Trigger the enrichment pipeline to populate company details, Helix fit, and connections
+    await inngest.send({
+      name: 'prospects/run-pipeline',
+      data: { prospectId: prospect.id },
+    });
+
     return NextResponse.json({
-      message: 'Prospect added successfully',
+      message: 'Prospect added successfully. Enrichment running in background.',
       prospect,
+      enriching: true,
     });
   }
 

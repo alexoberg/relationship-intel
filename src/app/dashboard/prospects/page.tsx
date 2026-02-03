@@ -283,14 +283,15 @@ export default function ProspectsPage() {
       const data = await response.json();
 
       if (response.ok) {
-        setAddDomainResult({ type: 'success', message: `Added ${data.prospect.name} (${data.prospect.company_domain})` });
+        const enrichingMsg = data.enriching ? ' - enriching in background...' : '';
+        setAddDomainResult({ type: 'success', message: `Added ${data.prospect.name}${enrichingMsg}` });
         setDomainInput('');
         await loadProspects();
         // Auto-close modal after success
         setTimeout(() => {
           setShowAddDomainModal(false);
           setAddDomainResult(null);
-        }, 1500);
+        }, 2000);
       } else if (response.status === 409) {
         setAddDomainResult({ type: 'error', message: `${data.prospect.name} already exists in your list` });
       } else {
