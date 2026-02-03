@@ -118,6 +118,7 @@ export async function POST(request: NextRequest) {
       eventId = ids[0];
     } else if (source === 'hn_profiles') {
       // Trigger dedicated profile scanner
+      console.log('[Listener] Triggering HN profile scan for team:', membership.team_id);
       const { ids } = await inngest.send({
         name: 'listener/scan-hn-profiles',
         data: {
@@ -131,6 +132,7 @@ export async function POST(request: NextRequest) {
         },
       });
       eventId = ids[0];
+      console.log('[Listener] HN profile scan event sent, ID:', eventId);
     } else {
       const { ids } = await inngest.send({
         name: 'listener/scan-rss',
@@ -144,9 +146,14 @@ export async function POST(request: NextRequest) {
       eventId = ids[0];
     }
 
+    console.log(`[Listener] ${source.toUpperCase()} scan triggered successfully, event ID: ${eventId}`);
+
     return success({
       message: `${source.toUpperCase()} scan triggered`,
       eventId,
+      teamId: membership.team_id,
+      source,
+      triggeredAt: new Date().toISOString(),
     });
   });
 }

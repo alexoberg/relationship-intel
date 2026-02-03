@@ -169,10 +169,12 @@ export default function ListenerPage() {
 
       if (res.ok) {
         const data = await res.json();
-        // Show success message
+        const eventId = data.data?.eventId || 'unknown';
+        console.log(`[Listener] Scan triggered, event ID: ${eventId}`, data);
+        // Show success message with event ID for debugging
         setStatusMessage({
           type: 'success',
-          text: `${source.toUpperCase()} scan started! Results will appear shortly.`,
+          text: `${source.toUpperCase()} scan started! Event: ${eventId.slice(0, 8)}...`,
         });
 
         // Keep the scanning state for 5 seconds to indicate background work has started
