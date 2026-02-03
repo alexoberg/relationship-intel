@@ -103,6 +103,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Update prospect with review info
+  // NOTE: priority_score is a generated column, don't update it directly
   const prospectUpdates: Record<string, unknown> = {
     user_fit_override: isGoodFit,
     reviewed_at: new Date().toISOString(),
@@ -116,14 +117,6 @@ export async function POST(request: NextRequest) {
     updated_at: new Date().toISOString(),
   };
 
-  // Recalculate priority score if user rating is provided
-  // Formula: (user_rating * 10) + connection_score + helix_fit_score
-  if (userRating) {
-    const connectionScore = prospect.connection_score || 0;
-    const helixScore = prospect.helix_fit_score || 0;
-    prospectUpdates.priority_score = (userRating * 10) + connectionScore + helixScore;
-  }
-
   // Update status based on fit assessment
   if (!isGoodFit && prospect.status === 'new') {
     prospectUpdates.status = 'not_a_fit';
@@ -132,10 +125,15 @@ export async function POST(request: NextRequest) {
     prospectUpdates.status = 'new';
   }
 
-  await adminClient
+  const { error: updateError } = await adminClient
     .from('prospects')
     .update(prospectUpdates)
     .eq('id', prospectId);
+
+  if (updateError) {
+    console.error('Failed to update prospect:', updateError);
+    // Don't fail the request, feedback was saved
+  }
 
   // Log activity
   await adminClient.rpc('log_prospect_activity', {
