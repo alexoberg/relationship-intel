@@ -28,6 +28,11 @@ import {
   Download,
   SlidersHorizontal,
   ArrowUpDown,
+  Plus,
+  Globe,
+  AlertCircle,
+  CheckCircle,
+  Loader2,
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -111,6 +116,10 @@ export default function ProspectsPage() {
   const [sourceFilter, setSourceFilter] = useState<string | null>(null);
   const [sortField, setSortField] = useState<string>('priority_score');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [showAddDomainModal, setShowAddDomainModal] = useState(false);
+  const [domainInput, setDomainInput] = useState('');
+  const [addingDomain, setAddingDomain] = useState(false);
+  const [addDomainResult, setAddDomainResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const supabase = createClient();
 
@@ -252,6 +261,47 @@ export default function ProspectsPage() {
       console.error('Sync failed:', error);
     }
     setSyncing(false);
+  };
+
+  const handleAddByDomain = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!domainInput.trim()) return;
+
+    setAddingDomain(true);
+    setAddDomainResult(null);
+
+    try {
+      const response = await fetch('/api/prospects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'add-by-domain',
+          domain: domainInput.trim(),
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setAddDomainResult({ type: 'success', message: `Added ${data.prospect.name} (${data.prospect.company_domain})` });
+        setDomainInput('');
+        await loadProspects();
+        // Auto-close modal after success
+        setTimeout(() => {
+          setShowAddDomainModal(false);
+          setAddDomainResult(null);
+        }, 1500);
+      } else if (response.status === 409) {
+        setAddDomainResult({ type: 'error', message: `${data.prospect.name} already exists in your list` });
+      } else {
+        setAddDomainResult({ type: 'error', message: data.error || 'Failed to add prospect' });
+      }
+    } catch (error) {
+      console.error('Add by domain failed:', error);
+      setAddDomainResult({ type: 'error', message: 'Network error. Please try again.' });
+    }
+
+    setAddingDomain(false);
   };
 
   const filteredProspects = prospects.filter((p) => {
@@ -444,6 +494,13 @@ export default function ProspectsPage() {
             </p>
           </div>
           <div className="flex gap-3">
+            <button
+              onClick={() => setShowAddDomainModal(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 shadow-lg shadow-green-500/25"
+            >
+              <Plus className="w-4 h-4" />
+              Add by Domain
+            </button>
             <button
               onClick={handleExportCSV}
               disabled={sortedProspects.length === 0}
@@ -928,6 +985,99 @@ export default function ProspectsPage() {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add by Domain Modal */}
+      {showAddDomainModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+            <div className="flex items-center justify-between p-4 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <Globe className="w-5 h-5 text-green-600" />
+                <h3 className="text-lg font-semibold text-gray-900">Add Prospect by Domain</h3>
+              </div>
+              <button
+                onClick={() => {
+                  setShowAddDomainModal(false);
+                  setDomainInput('');
+                  setAddDomainResult(null);
+                }}
+                className="p-1 hover:bg-gray-100 rounded"
+              >
+                <X className="w-5 h-5 text-gray-400" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddByDomain} className="p-4">
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Company Domain
+                </label>
+                <input
+                  type="text"
+                  value={domainInput}
+                  onChange={(e) => setDomainInput(e.target.value)}
+                  placeholder="e.g., stripe.com or https://stripe.com"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none text-lg"
+                  autoFocus
+                  disabled={addingDomain}
+                />
+                <p className="text-xs text-gray-500 mt-2">
+                  Paste a domain or full URL. We&apos;ll automatically clean it up.
+                </p>
+              </div>
+
+              {addDomainResult && (
+                <div
+                  className={`mb-4 p-3 rounded-lg flex items-center gap-2 ${
+                    addDomainResult.type === 'success'
+                      ? 'bg-green-50 text-green-700 border border-green-200'
+                      : 'bg-red-50 text-red-700 border border-red-200'
+                  }`}
+                >
+                  {addDomainResult.type === 'success' ? (
+                    <CheckCircle className="w-4 h-4 flex-shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  )}
+                  <span className="text-sm">{addDomainResult.message}</span>
+                </div>
+              )}
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAddDomainModal(false);
+                    setDomainInput('');
+                    setAddDomainResult(null);
+                  }}
+                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium text-gray-700"
+                  disabled={addingDomain}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!domainInput.trim() || addingDomain}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                >
+                  {addingDomain ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Adding...
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="w-4 h-4" />
+                      Add Prospect
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -115,7 +115,70 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { action, prospects: customProspects } = body;
+  const { action, prospects: customProspects, domain } = body;
+
+  // Action: add single prospect by domain
+  if (action === 'add-by-domain' && domain) {
+    const adminClient = createAdminClient();
+
+    // Normalize domain (remove protocol, www, trailing slash)
+    let normalizedDomain = domain
+      .toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .replace(/^www\./, '')
+      .replace(/\/.*$/, '')
+      .trim();
+
+    // Basic validation
+    if (!normalizedDomain || !normalizedDomain.includes('.')) {
+      return NextResponse.json({ error: 'Invalid domain format' }, { status: 400 });
+    }
+
+    // Check if prospect already exists
+    const { data: existing } = await adminClient
+      .from('prospects')
+      .select('id, name, company_domain')
+      .eq('team_id', teamId)
+      .eq('company_domain', normalizedDomain)
+      .single();
+
+    if (existing) {
+      return NextResponse.json({
+        error: 'Prospect already exists',
+        prospect: existing,
+      }, { status: 409 });
+    }
+
+    // Create the prospect with domain - company name will be derived from domain for now
+    const companyName = normalizedDomain
+      .split('.')[0]
+      .split('-')
+      .map((word: string) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
+
+    const { data: prospect, error } = await adminClient
+      .from('prospects')
+      .insert({
+        team_id: teamId,
+        name: companyName,
+        company_domain: normalizedDomain,
+        status: 'new',
+        source: 'manual_domain',
+        helix_fit_score: 50, // Default score until enriched
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Failed to create prospect:', error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({
+      message: 'Prospect added successfully',
+      prospect,
+    });
+  }
 
   // Action: import seed data (synchronous for reliability)
   if (action === 'import-seed') {
