@@ -357,10 +357,15 @@ export const scanHNProfiles = inngest.createFunction(
           );
 
           // Filter out recently scanned users
-          const recentlyScanned = await step.run(
+          // Note: step.run serializes return values, so we convert Set to Array
+          const recentlyScannedArray = await step.run(
             `filter-recent-${story.id}`,
-            () => getRecentlyScannedUsers(usernames, rescanAfterHours)
+            async () => {
+              const recentSet = await getRecentlyScannedUsers(usernames, rescanAfterHours);
+              return Array.from(recentSet);
+            }
           );
+          const recentlyScanned = new Set(recentlyScannedArray);
 
           const usersToScan = usernames
             .filter((u: string) => !recentlyScanned.has(u))
