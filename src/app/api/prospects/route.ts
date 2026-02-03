@@ -117,6 +117,8 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   const { action, prospects: customProspects, domain, companyName } = body;
 
+  console.log('POST /api/prospects', { action, domain, companyName });
+
   // Action: add single prospect by name and domain
   if (action === 'add-by-domain' && domain && companyName) {
     const adminClient = createAdminClient();
@@ -129,8 +131,11 @@ export async function POST(request: NextRequest) {
       .replace(/\/.*$/, '')
       .trim();
 
+    console.log('Normalized domain:', normalizedDomain);
+
     // Basic validation
     if (!normalizedDomain || !normalizedDomain.includes('.')) {
+      console.log('Domain validation failed:', { normalizedDomain, hasDot: normalizedDomain?.includes('.') });
       return NextResponse.json({ error: 'Invalid domain format' }, { status: 400 });
     }
 
