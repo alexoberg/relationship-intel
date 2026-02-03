@@ -15,6 +15,7 @@ import {
   ChevronRight,
   Target,
   Radio,
+  Wand2,
 } from 'lucide-react';
 import type { User } from '@supabase/supabase-js';
 import type { Profile } from '@/types/database';
@@ -28,6 +29,7 @@ const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Listener', href: '/dashboard/listener', icon: Radio },
   { name: 'Prospects', href: '/dashboard/prospects', icon: Target },
+  { name: 'Lookalikes', href: '/dashboard/prospects/lookalike', icon: Wand2 },
   { name: 'Contacts', href: '/dashboard/contacts', icon: Users },
   { name: 'Team Network', href: '/dashboard/team', icon: UsersRound },
   { name: 'Import', href: '/dashboard/import', icon: Upload },
