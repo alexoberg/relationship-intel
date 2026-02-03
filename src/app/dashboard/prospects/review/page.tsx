@@ -18,6 +18,12 @@ import {
   Undo2,
   Info,
   Keyboard,
+  Globe,
+  AlertTriangle,
+  CheckCircle,
+  Loader2,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 
 interface ProspectConnection {
@@ -68,6 +74,9 @@ export default function ProspectReviewPage() {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [reviewHistory, setReviewHistory] = useState<{ prospectId: string; action: 'good' | 'not_fit' | 'skip' }[]>([]);
   const [stats, setStats] = useState({ total: 0, reviewed: 0, unreviewed: 0 });
+  const [domainStatus, setDomainStatus] = useState<'checking' | 'live' | 'dead' | null>(null);
+  const [domainError, setDomainError] = useState<string | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
   const cardStartTime = useRef<number>(Date.now());
   const feedbackInputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -97,12 +106,47 @@ export default function ProspectReviewPage() {
     loadProspects();
   }, [loadProspects]);
 
-  // Reset timer when card changes
+  // Check domain status when card changes
+  const checkDomain = useCallback(async (domain: string, prospectId: string) => {
+    setDomainStatus('checking');
+    setDomainError(null);
+    try {
+      const response = await fetch(`/api/check-domain?domain=${encodeURIComponent(domain)}`);
+      const data = await response.json();
+      const isDead = data.status !== 'live';
+      setDomainStatus(isDead ? 'dead' : 'live');
+      if (isDead) {
+        setDomainError(data.error || 'unreachable');
+        // Auto-mark as not a fit with note about dead domain
+        await fetch('/api/prospects/feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prospectId,
+            isGoodFit: false,
+            feedbackReason: `Website down (${data.error || 'unreachable'}) - company may be defunct`,
+            userRating: 1,
+          }),
+        });
+      }
+    } catch {
+      setDomainStatus('dead');
+      setDomainError('check failed');
+    }
+  }, []);
+
+  // Reset timer and check domain when card changes
   useEffect(() => {
     cardStartTime.current = Date.now();
     setFeedbackText('');
     setUserRating(null);
-  }, [currentIndex]);
+    setShowPreview(false);
+
+    const prospect = prospects[currentIndex];
+    if (prospect?.company_domain) {
+      checkDomain(prospect.company_domain, prospect.id);
+    }
+  }, [currentIndex, prospects, checkDomain]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -138,6 +182,11 @@ export default function ProspectReviewPage() {
         case 'arrowup':
           handleSkip();
           break;
+        case 'p':
+          if (domainStatus === 'live') {
+            setShowPreview(s => !s);
+          }
+          break;
         case ' ':
           e.preventDefault();
           feedbackInputRef.current?.focus();
@@ -155,7 +204,7 @@ export default function ProspectReviewPage() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentIndex, prospects]);
+  }, [currentIndex, prospects, domainStatus]);
 
   const handleFeedback = async (isGoodFit: boolean) => {
     const prospect = prospects[currentIndex];
@@ -340,6 +389,10 @@ export default function ProspectReviewPage() {
                 <span className="text-white"><kbd className="px-2 py-1 bg-gray-800 rounded">S</kbd> or <kbd className="px-2 py-1 bg-gray-800 rounded">↑</kbd></span>
               </div>
               <div className="flex justify-between">
+                <span className="text-gray-400">Preview Site</span>
+                <span className="text-white"><kbd className="px-2 py-1 bg-gray-800 rounded">P</kbd></span>
+              </div>
+              <div className="flex justify-between">
                 <span className="text-gray-400">Add Note</span>
                 <span className="text-white"><kbd className="px-2 py-1 bg-gray-800 rounded">Space</kbd></span>
               </div>
@@ -367,15 +420,44 @@ export default function ProspectReviewPage() {
                   <div>
                     <h2 className="text-2xl font-bold text-white">{currentProspect.company_name}</h2>
                     <div className="flex items-center gap-2 mt-1">
-                      <a
-                        href={`https://${currentProspect.company_domain}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-sm text-gray-400 hover:text-purple-400 flex items-center gap-1"
-                      >
-                        {currentProspect.company_domain}
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
+                      <div className="flex items-center gap-2">
+                        {/* Domain status indicator */}
+                        {domainStatus === 'checking' && (
+                          <Loader2 className="w-4 h-4 text-gray-400 animate-spin" />
+                        )}
+                        {domainStatus === 'live' && (
+                          <span title="Website is live">
+                            <CheckCircle className="w-4 h-4 text-green-400" />
+                          </span>
+                        )}
+                        {domainStatus === 'dead' && (
+                          <span title={`Website down: ${domainError}`}>
+                            <AlertTriangle className="w-4 h-4 text-red-400" />
+                          </span>
+                        )}
+                        <a
+                          href={`https://${currentProspect.company_domain}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={`text-sm flex items-center gap-1 ${
+                            domainStatus === 'dead'
+                              ? 'text-red-400 line-through'
+                              : 'text-gray-400 hover:text-purple-400'
+                          }`}
+                        >
+                          {currentProspect.company_domain}
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                        {domainStatus === 'live' && (
+                          <button
+                            onClick={() => setShowPreview(!showPreview)}
+                            className="p-1 text-gray-500 hover:text-purple-400 transition-colors"
+                            title={showPreview ? 'Hide preview' : 'Show preview'}
+                          >
+                            {showPreview ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                        )}
+                      </div>
                       {currentProspect.funding_stage && (
                         <>
                           <span className="text-gray-600">•</span>
@@ -418,7 +500,66 @@ export default function ProspectReviewPage() {
                   })}
                 </div>
               )}
+
+              {/* Dead website warning */}
+              {domainStatus === 'dead' && (
+                <div className="mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <AlertTriangle className="w-5 h-5 text-red-400 flex-shrink-0" />
+                    <div className="flex-1">
+                      <span className="text-red-400 font-medium">Website appears to be down</span>
+                      <span className="text-red-400/70 text-sm ml-2">
+                        ({domainError === 'timeout' ? 'Timed out' : 'Could not connect'})
+                      </span>
+                      <p className="text-red-400/60 text-sm mt-1">
+                        Auto-marked as not a fit. Company may be defunct.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setStats(prev => ({
+                          ...prev,
+                          reviewed: prev.reviewed + 1,
+                          unreviewed: prev.unreviewed - 1,
+                        }));
+                        moveToNext();
+                      }}
+                      className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-sm font-medium"
+                    >
+                      Next →
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
+
+            {/* Website Preview */}
+            {showPreview && domainStatus === 'live' && (
+              <div className="border-b border-gray-800">
+                <div className="bg-gray-800/50 px-4 py-2 flex items-center justify-between">
+                  <span className="text-xs text-gray-400 flex items-center gap-2">
+                    <Globe className="w-4 h-4" />
+                    Website Preview
+                  </span>
+                  <button
+                    onClick={() => setShowPreview(false)}
+                    className="text-xs text-gray-500 hover:text-gray-300"
+                  >
+                    Hide
+                  </button>
+                </div>
+                <div className="relative w-full h-64 bg-gray-900">
+                  <iframe
+                    src={`https://${currentProspect.company_domain}`}
+                    className="w-full h-full border-0"
+                    sandbox="allow-scripts allow-same-origin"
+                    title={`${currentProspect.company_name} website preview`}
+                    loading="lazy"
+                  />
+                  <div className="absolute inset-0 pointer-events-none bg-gradient-to-b from-transparent via-transparent to-gray-900/50" />
+                </div>
+              </div>
+            )}
 
             {/* AI Reason */}
             {currentProspect.helix_fit_reason && (
