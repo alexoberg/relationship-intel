@@ -50,21 +50,22 @@ export async function findConnectionsToProspect(
   const { data: currentEmployees } = await supabase
     .from('contacts')
     .select(`
-      id, name, email, linkedin_url, title, company, 
+      id, full_name, email, linkedin_url, current_title, current_company,
       connection_strength, company_domain
     `)
     .eq('team_id', teamId)
-    .eq('company_domain', normalizedDomain);
+    .eq('company_domain', normalizedDomain)
+    .or('is_junk.is.null,is_junk.eq.false');
 
   for (const contact of currentEmployees || []) {
     connections.push({
       contact_id: contact.id,
-      contact_name: contact.name,
+      contact_name: contact.full_name,
       contact_email: contact.email,
       contact_linkedin: contact.linkedin_url,
       connection_strength: contact.connection_strength || 0,
       is_current_employee: true,
-      job_title: contact.title,
+      job_title: contact.current_title,
     });
   }
 
@@ -72,26 +73,27 @@ export async function findConnectionsToProspect(
   const { data: formerEmployees } = await supabase
     .from('contacts')
     .select(`
-      id, name, email, linkedin_url, connection_strength, job_history
+      id, full_name, email, linkedin_url, connection_strength, job_history
     `)
     .eq('team_id', teamId)
-    .not('job_history', 'eq', '[]');
+    .not('job_history', 'eq', '[]')
+    .or('is_junk.is.null,is_junk.eq.false');
 
   for (const contact of formerEmployees || []) {
     const jobHistory = contact.job_history as any[] || [];
-    
+
     for (const job of jobHistory) {
       // Match by domain or company name
       const jobDomain = (job.domain || '').toLowerCase().replace(/^www\./, '');
       const jobCompany = (job.company || '').toLowerCase();
-      
+
       const matchesDomain = jobDomain === normalizedDomain;
       const matchesName = jobCompany.includes(companyName) || companyName.includes(jobCompany);
-      
+
       if ((matchesDomain || matchesName) && !job.is_current) {
         connections.push({
           contact_id: contact.id,
-          contact_name: contact.name,
+          contact_name: contact.full_name,
           contact_email: contact.email,
           contact_linkedin: contact.linkedin_url,
           connection_strength: contact.connection_strength || 0,
@@ -102,6 +104,47 @@ export async function findConnectionsToProspect(
         });
       }
     }
+  }
+
+  // 2b. Also check work_history TABLE for former employees (fallback for PDL-enriched contacts)
+  // Note: work_history table uses company_name and company_linkedin_url, not company_domain/company_normalized
+  const { data: workHistoryMatches } = await supabase
+    .from('work_history')
+    .select(`
+      contact_id,
+      company_name,
+      company_linkedin_url,
+      title,
+      start_date,
+      end_date,
+      is_current,
+      contacts!inner (
+        id, full_name, email, linkedin_url, connection_strength, team_id, is_junk
+      )
+    `)
+    .eq('contacts.team_id', teamId)
+    .eq('is_current', false)
+    .ilike('company_name', `%${companyName}%`);
+
+  // Add work_history matches (dedupe by contact_id)
+  const existingContactIds = new Set(connections.map(c => c.contact_id));
+  for (const wh of workHistoryMatches || []) {
+    const contact = wh.contacts as any;
+    if (!contact || contact.is_junk === true) continue;
+    if (existingContactIds.has(contact.id)) continue; // Already added from job_history
+
+    connections.push({
+      contact_id: contact.id,
+      contact_name: contact.full_name,
+      contact_email: contact.email,
+      contact_linkedin: contact.linkedin_url,
+      connection_strength: contact.connection_strength || 0,
+      is_current_employee: false,
+      job_title: wh.title,
+      job_start_date: wh.start_date,
+      job_end_date: wh.end_date,
+    });
+    existingContactIds.add(contact.id);
   }
 
   // 3. Get connector info for each contact (who introduced you)

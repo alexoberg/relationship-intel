@@ -237,8 +237,19 @@ export const enrichContacts = inngest.createFunction(
           ? (Date.now() - earliestWorkDate.getTime()) / (365.25 * 24 * 60 * 60 * 1000)
           : null;
 
-        // Update contact with enriched data INCLUDING company history
+        // Update contact with enriched data INCLUDING company history AND job_history JSONB
         const currentJob = workHistory.find(j => j.is_current) || workHistory[0];
+
+        // Build job_history JSONB for prospect matching (includes domain for matching)
+        const jobHistoryJson = workHistory.map(job => ({
+          company: job.company_name,
+          domain: extractDomainFromLinkedIn(job.company_linkedin_url) ||
+                  normalizeCompanyName(job.company_name).replace(/\s+/g, '') + '.com', // Fallback domain
+          title: job.title,
+          start_date: job.start_date,
+          end_date: job.end_date,
+          is_current: job.is_current,
+        }));
 
         await supabase
           .from('contacts')
@@ -251,11 +262,13 @@ export const enrichContacts = inngest.createFunction(
             current_company_industry: person.job_company_industry || currentJob?.company_industry || null,
             email: contact.email || person.work_email || person.personal_emails?.[0] || null,
             linkedin_url: contact.linkedin_url || person.linkedin_url || null,
-            // NEW: Company history fields
+            // Company history fields
             company_history: companyHistory,
             company_history_count: companyHistory.length,
             earliest_work_date: earliestWorkDate?.toISOString().split('T')[0] || null,
             career_years: careerYears ? Math.round(careerYears * 10) / 10 : null,
+            // Job history JSONB for prospect matching
+            job_history: jobHistoryJson,
           })
           .eq('id', contact.id);
       });
