@@ -23,6 +23,7 @@ import {
   CheckCircle,
   Play,
   Users,
+  Loader2,
 } from 'lucide-react';
 
 interface Discovery {
@@ -350,6 +351,46 @@ export default function ListenerPage() {
               icon={Clock}
               color="orange"
             />
+          </div>
+        )}
+
+        {/* Recent Runs */}
+        {runs.length > 0 && (
+          <div className="mb-6 bg-white rounded-xl border border-gray-200 p-4">
+            <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+              <Clock className="w-4 h-4" />
+              Recent Runs
+            </h3>
+            <div className="flex flex-wrap gap-2">
+              {runs.slice(0, 5).map((run) => (
+                <div
+                  key={run.id}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${
+                    run.status === 'running'
+                      ? 'bg-blue-50 border border-blue-200 text-blue-700'
+                      : run.status === 'completed'
+                      ? 'bg-green-50 border border-green-200 text-green-700'
+                      : run.status === 'failed'
+                      ? 'bg-red-50 border border-red-200 text-red-700'
+                      : 'bg-gray-50 border border-gray-200 text-gray-600'
+                  }`}
+                >
+                  {run.status === 'running' && <Loader2 className="w-3 h-3 animate-spin" />}
+                  {run.status === 'completed' && <CheckCircle className="w-3 h-3" />}
+                  {run.status === 'failed' && <AlertCircle className="w-3 h-3" />}
+                  <span className="font-medium">{run.source_type}</span>
+                  <span className="text-xs opacity-75">
+                    {run.status === 'running' ? 'running...' : (
+                      <>
+                        {run.discoveries_created || 0} found
+                        {' · '}
+                        {new Date(run.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </>
+                    )}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
