@@ -351,10 +351,18 @@ export const scanHNProfiles = inngest.createFunction(
 
         try {
           // Collect usernames from story and comments
-          const { usernames, commentsByUser } = await step.run(
+          // Note: step.run serializes return values, so we convert Map to Object
+          const { usernames, commentsByUserObj } = await step.run(
             `collect-users-${story.id}`,
-            () => collectStoryUsernames(story, maxUsersPerStory * 2)
+            async () => {
+              const result = await collectStoryUsernames(story, maxUsersPerStory * 2);
+              return {
+                usernames: result.usernames,
+                commentsByUserObj: Object.fromEntries(result.commentsByUser),
+              };
+            }
           );
+          const commentsByUser = new Map(Object.entries(commentsByUserObj)) as Map<string, HNItem>;
 
           // Filter out recently scanned users
           // Note: step.run serializes return values, so we convert Set to Array
