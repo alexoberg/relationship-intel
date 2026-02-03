@@ -121,13 +121,24 @@ export async function upsertHNUsers(
 export async function incrementDiscoveryCount(username: string): Promise<void> {
   const supabase = createAdminClient();
 
-  await supabase.rpc('increment_hn_user_discovery_count', { p_username: username }).catch(() => {
-    // Fall back to regular update if RPC doesn't exist
-    supabase
+  // Try to use RPC if it exists, otherwise fall back to manual increment
+  const { error } = await supabase.rpc('increment_hn_user_discovery_count', { p_username: username });
+
+  if (error) {
+    // Fall back to manual increment if RPC doesn't exist
+    const { data: user } = await supabase
       .from('listener_hn_users')
-      .update({ discoveries_created: supabase.rpc('coalesce', { val: 'discoveries_created', default_val: 0 }) })
-      .eq('hn_username', username);
-  });
+      .select('discoveries_created')
+      .eq('hn_username', username)
+      .single();
+
+    if (user) {
+      await supabase
+        .from('listener_hn_users')
+        .update({ discoveries_created: (user.discoveries_created || 0) + 1 })
+        .eq('hn_username', username);
+    }
+  }
 }
 
 // ============================================
