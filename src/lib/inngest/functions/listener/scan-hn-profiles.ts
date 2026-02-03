@@ -16,7 +16,6 @@ import {
   fetchUser,
   fetchUsers,
   extractCompanyFromProfile,
-  HNItem,
 } from '@/lib/listener/clients/hn';
 import { matchText, getBestMatchContext, getPrimaryCategory } from '@/lib/listener/keyword-matcher';
 import { createDiscovery } from '@/lib/listener/db/discoveries';
@@ -34,7 +33,7 @@ import {
   crossValidateCompanyInfo,
 } from '@/lib/listener/profile-enrichment';
 import { isCompanyDomain, domainToCompanyName } from '@/lib/listener/domain-extractor';
-import { DiscoveryCandidate, HNUser, HNUserCompanyInfo } from '@/lib/listener/types';
+import { DiscoveryCandidate, HNItem, HNUser, HNUserCompanyInfo } from '@/lib/listener/types';
 
 /**
  * Collect all unique usernames from a story and its comments
