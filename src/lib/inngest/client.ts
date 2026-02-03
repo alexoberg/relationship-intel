@@ -78,6 +78,21 @@ export interface ListenerPromoteEvent {
   };
 }
 
+export interface ListenerScanHNProfilesEvent {
+  name: 'listener/scan-hn-profiles';
+  data: {
+    teamId: string;
+    maxStoriesPerScan?: number;
+    maxUsersPerStory?: number;
+    minKeywordScore?: number;
+    minKarma?: number;
+    minConfidence?: number;
+    autoPromoteThreshold?: number;
+    rescanAfterHours?: number;
+    enrichWithGitHub?: boolean;
+  };
+}
+
 export type InngestEvents =
   | EnrichmentStartedEvent
   | EnrichmentCompletedEvent
@@ -85,4 +100,5 @@ export type InngestEvents =
   | BackgroundSyncStartedEvent
   | ListenerScanHNEvent
   | ListenerScanRSSEvent
-  | ListenerPromoteEvent;
+  | ListenerPromoteEvent
+  | ListenerScanHNProfilesEvent;

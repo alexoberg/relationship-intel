@@ -12,6 +12,7 @@ import { ConfidenceFactors, ListenerSourceType, KeywordMatch } from './types';
 export const SOURCE_RELIABILITY: Record<ListenerSourceType, number> = {
   hn_post: 15,        // Front page story - high signal
   hn_comment: 8,      // Comment - lower signal, could be tangential
+  hn_profile: 12,     // User profile - intentional company info, between post and comment
   news_article: 18,   // Tech news article - curated, reliable
   reddit_post: 12,    // Reddit post
   reddit_comment: 6,  // Reddit comment - lowest signal

@@ -360,6 +360,134 @@ export async function fetchUsers(
 }
 
 /**
+ * Extract social profile links from HN about field
+ */
+export function extractSocialProfiles(about: string): {
+  linkedinUrl: string | null;
+  twitterHandle: string | null;
+  githubUsername: string | null;
+  personalWebsite: string | null;
+} {
+  const result = {
+    linkedinUrl: null as string | null,
+    twitterHandle: null as string | null,
+    githubUsername: null as string | null,
+    personalWebsite: null as string | null,
+  };
+
+  if (!about) return result;
+
+  // LinkedIn URL patterns
+  const linkedinPatterns = [
+    /https?:\/\/(?:www\.)?linkedin\.com\/in\/([a-zA-Z0-9_-]+)\/?/i,
+    /linkedin\.com\/in\/([a-zA-Z0-9_-]+)/i,
+  ];
+  for (const pattern of linkedinPatterns) {
+    const match = about.match(pattern);
+    if (match) {
+      result.linkedinUrl = `https://www.linkedin.com/in/${match[1]}`;
+      break;
+    }
+  }
+
+  // Twitter/X handle patterns
+  const twitterPatterns = [
+    /https?:\/\/(?:www\.)?(?:twitter|x)\.com\/([a-zA-Z0-9_]+)\/?/i,
+    /(?:twitter|x)\.com\/([a-zA-Z0-9_]+)/i,
+    /(?:^|\s)@([a-zA-Z][a-zA-Z0-9_]{1,14})(?:\s|$|[,.])/,  // @handle in text
+  ];
+  for (const pattern of twitterPatterns) {
+    const match = about.match(pattern);
+    if (match && match[1].toLowerCase() !== 'mention') {
+      result.twitterHandle = match[1];
+      break;
+    }
+  }
+
+  // GitHub username patterns
+  const githubPatterns = [
+    /https?:\/\/(?:www\.)?github\.com\/([a-zA-Z0-9_-]+)\/?(?![a-zA-Z])/i,
+    /github\.com\/([a-zA-Z0-9_-]+)/i,
+  ];
+  for (const pattern of githubPatterns) {
+    const match = about.match(pattern);
+    if (match && !['pulls', 'issues', 'topics', 'trending', 'explore'].includes(match[1].toLowerCase())) {
+      result.githubUsername = match[1];
+      break;
+    }
+  }
+
+  // Personal website (first non-social URL)
+  const urlRegex = /https?:\/\/[^\s<>"']+/gi;
+  const urls = about.match(urlRegex) || [];
+  for (const url of urls) {
+    const lowerUrl = url.toLowerCase();
+    if (!lowerUrl.includes('linkedin.com') &&
+        !lowerUrl.includes('twitter.com') &&
+        !lowerUrl.includes('x.com') &&
+        !lowerUrl.includes('github.com') &&
+        !lowerUrl.includes('news.ycombinator.com')) {
+      result.personalWebsite = url;
+      break;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Known company name to domain mappings for common tech companies
+ */
+const KNOWN_COMPANY_DOMAINS: Record<string, string> = {
+  'google': 'google.com',
+  'meta': 'meta.com',
+  'facebook': 'meta.com',
+  'amazon': 'amazon.com',
+  'apple': 'apple.com',
+  'microsoft': 'microsoft.com',
+  'netflix': 'netflix.com',
+  'stripe': 'stripe.com',
+  'airbnb': 'airbnb.com',
+  'uber': 'uber.com',
+  'lyft': 'lyft.com',
+  'dropbox': 'dropbox.com',
+  'slack': 'slack.com',
+  'salesforce': 'salesforce.com',
+  'shopify': 'shopify.com',
+  'square': 'squareup.com',
+  'twitter': 'twitter.com',
+  'x': 'x.com',
+  'linkedin': 'linkedin.com',
+  'github': 'github.com',
+  'gitlab': 'gitlab.com',
+  'cloudflare': 'cloudflare.com',
+  'datadog': 'datadoghq.com',
+  'snowflake': 'snowflake.com',
+  'databricks': 'databricks.com',
+  'palantir': 'palantir.com',
+  'coinbase': 'coinbase.com',
+  'robinhood': 'robinhood.com',
+  'plaid': 'plaid.com',
+  'figma': 'figma.com',
+  'notion': 'notion.so',
+  'vercel': 'vercel.com',
+  'supabase': 'supabase.com',
+  'anthropic': 'anthropic.com',
+  'openai': 'openai.com',
+  'nvidia': 'nvidia.com',
+  'tesla': 'tesla.com',
+  'spacex': 'spacex.com',
+  'twitch': 'twitch.tv',
+  'discord': 'discord.com',
+  'roblox': 'roblox.com',
+  'spotify': 'spotify.com',
+  'instacart': 'instacart.com',
+  'doordash': 'doordash.com',
+  'bytedance': 'bytedance.com',
+  'tiktok': 'tiktok.com',
+};
+
+/**
  * Extract company information from a HN user's "about" field
  *
  * HN users often put:
@@ -367,6 +495,7 @@ export async function fetchUsers(
  * - Email: "john@company.com"
  * - Work info: "I work at Stripe" or "Founder of Acme Inc"
  * - Twitter/LinkedIn with company context
+ * - YC batch: "(YC S21)" or "Company (YC W22)"
  */
 export function extractCompanyFromProfile(user: HNUser): HNUserCompanyInfo {
   const result: HNUserCompanyInfo = {
@@ -382,6 +511,12 @@ export function extractCompanyFromProfile(user: HNUser): HNUserCompanyInfo {
 
   const about = user.about;
 
+  // Extract social profiles first
+  const socialProfiles = extractSocialProfiles(about);
+  result.linkedinUrl = socialProfiles.linkedinUrl;
+  result.twitterHandle = socialProfiles.twitterHandle;
+  result.githubUsername = socialProfiles.githubUsername;
+
   // Clean HTML and decode entities
   const cleanAbout = about
     .replace(/<[^>]*>/g, ' ')
@@ -394,80 +529,167 @@ export function extractCompanyFromProfile(user: HNUser): HNUserCompanyInfo {
     .replace(/\s+/g, ' ')
     .trim();
 
+  // Collect all signals for potential multi-signal boost
+  const signals: Array<{ domain: string | null; name: string | null; confidence: number; source: HNUserCompanyInfo['source'] }> = [];
+
   // 1. Look for URLs in about (highest confidence)
   const urlRegex = /https?:\/\/[^\s<>"']+/gi;
   const urls = about.match(urlRegex) || [];
 
   for (const url of urls) {
+    // Skip social media URLs
+    const lowerUrl = url.toLowerCase();
+    if (lowerUrl.includes('linkedin.com') ||
+        lowerUrl.includes('twitter.com') ||
+        lowerUrl.includes('x.com/') ||
+        lowerUrl.includes('github.com')) {
+      continue;
+    }
+
     const domain = extractDomainFromUrl(url);
     if (domain && isCompanyDomain(domain)) {
-      result.companyDomain = domain;
-      result.companyName = domainToCompanyName(domain);
-      result.confidence = 0.9;
-      result.source = 'about_url';
-      return result;
+      signals.push({
+        domain,
+        name: domainToCompanyName(domain),
+        confidence: 0.9,
+        source: 'about_url',
+      });
+      break; // Only take first company URL
     }
   }
 
   // 2. Look for email addresses
   const emailRegex = /[a-zA-Z0-9._%+-]+@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/gi;
   let emailMatch;
+  const skipEmailDomains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com',
+                      'icloud.com', 'protonmail.com', 'fastmail.com', 'hey.com',
+                      'me.com', 'mac.com', 'live.com', 'msn.com', 'aol.com',
+                      'proton.me', 'tutanota.com', 'zoho.com'];
   while ((emailMatch = emailRegex.exec(cleanAbout)) !== null) {
     const domain = normalizeDomain(emailMatch[1]);
-    // Skip common email providers
-    const skipDomains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com',
-                        'icloud.com', 'protonmail.com', 'fastmail.com', 'hey.com',
-                        'me.com', 'mac.com', 'live.com', 'msn.com', 'aol.com'];
-    if (domain && !skipDomains.includes(domain) && isCompanyDomain(domain)) {
-      result.companyDomain = domain;
-      result.companyName = domainToCompanyName(domain);
-      result.confidence = 0.85;
-      result.source = 'email_domain';
-      return result;
+    if (domain && !skipEmailDomains.includes(domain) && isCompanyDomain(domain)) {
+      signals.push({
+        domain,
+        name: domainToCompanyName(domain),
+        confidence: 0.85,
+        source: 'email_domain',
+      });
+      break;
     }
   }
 
-  // 3. Look for work patterns like "I work at X" or "Founder of X" or "Engineer at X"
+  // 3. Enhanced work patterns
   const workPatterns = [
-    /(?:work(?:ing)?|employed)\s+(?:at|for|with)\s+([A-Z][A-Za-z0-9\s&.-]+?)(?:[,.\s]|$)/i,
-    /(?:founder|co-founder|ceo|cto|vp|director|engineer|developer|designer)\s+(?:at|of|@)\s+([A-Z][A-Za-z0-9\s&.-]+?)(?:[,.\s]|$)/i,
-    /(?:building|built|created?)\s+([A-Z][A-Za-z0-9\s&.-]+?)(?:[,.\s]|$)/i,
-    /@([A-Za-z][A-Za-z0-9_-]+)\s/,  // Twitter handle might be company
+    // Original patterns
+    { pattern: /(?:work(?:ing)?|employed)\s+(?:at|for|with)\s+([A-Z][A-Za-z0-9\s&.-]+?)(?:[,.\s]|$)/i, confidence: 0.6 },
+    { pattern: /(?:founder|co-founder|ceo|cto|vp|director|engineer|developer|designer|pm|product\s*manager)\s+(?:at|of|@)\s+([A-Z][A-Za-z0-9\s&.-]+?)(?:[,.\s]|$)/i, confidence: 0.7 },
+    { pattern: /(?:building|built|created?)\s+([A-Z][A-Za-z0-9\s&.-]+?)(?:[,.\s]|$)/i, confidence: 0.6 },
+
+    // YC patterns (common on HN)
+    { pattern: /\(YC\s*[A-Z]?\d{2}\)\s*[-–—]?\s*([A-Za-z0-9\s&.-]+?)(?:[,.\s]|$)/i, confidence: 0.8 },
+    { pattern: /([A-Za-z0-9\s&.-]+?)\s*\(YC\s*[A-Z]?\d{2}\)/i, confidence: 0.8 },
+
+    // Role-first patterns (e.g., "Stripe engineer", "Airbnb PM")
+    { pattern: /^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:engineer|developer|pm|designer|founder|ceo|cto)\b/i, confidence: 0.65 },
+
+    // Team/company identifier
+    { pattern: /\b(?:team|company)[:\s]+([A-Z][A-Za-z0-9\s&.-]+?)(?:[,.\s]|$)/i, confidence: 0.6 },
+
+    // Previously at patterns (still valuable for network)
+    { pattern: /(?:prev(?:iously)?|ex[-\s]?|former(?:ly)?)\s+(?:at|@)?\s*([A-Z][A-Za-z0-9\s&.-]+?)(?:[,.\s]|$)/i, confidence: 0.5 },
+
+    // Startup/company possessive
+    { pattern: /(?:my|our)\s+(?:startup|company)\s+([A-Z][A-Za-z0-9\s&.-]+?)(?:[,.\s]|$)/i, confidence: 0.65 },
+
+    // Job title with company in parens
+    { pattern: /(?:engineer|developer|pm|ceo|cto|founder|designer)[^(]*\(([A-Z][A-Za-z0-9\s&.-]+?)\)/i, confidence: 0.65 },
   ];
 
-  for (const pattern of workPatterns) {
+  const skipWords = ['the', 'a', 'an', 'my', 'our', 'things', 'stuff', 'something', 'software', 'web', 'mobile', 'apps'];
+
+  for (const { pattern, confidence } of workPatterns) {
     const match = cleanAbout.match(pattern);
     if (match && match[1]) {
-      const companyName = match[1].trim();
-      // Skip if it's a common phrase or too short
-      if (companyName.length > 2 && !['the', 'a', 'an', 'my', 'our'].includes(companyName.toLowerCase())) {
-        result.companyName = companyName;
-        result.confidence = 0.6;
-        result.source = 'about_text';
-        // Try to guess domain
-        const guessedDomain = companyName.toLowerCase()
-          .replace(/\s+/g, '')
-          .replace(/[^a-z0-9]/g, '') + '.com';
-        result.companyDomain = guessedDomain;
-        return result;
+      let companyName = match[1].trim();
+      // Clean up trailing punctuation
+      companyName = companyName.replace(/[,.\s]+$/, '');
+
+      if (companyName.length > 2 && !skipWords.includes(companyName.toLowerCase())) {
+        // Check if it's a known company
+        const knownDomain = KNOWN_COMPANY_DOMAINS[companyName.toLowerCase()];
+        if (knownDomain) {
+          signals.push({
+            domain: knownDomain,
+            name: companyName,
+            confidence: Math.min(confidence + 0.15, 0.9), // Boost for known companies
+            source: 'about_text',
+          });
+        } else {
+          // Guess domain
+          const guessedDomain = companyName.toLowerCase()
+            .replace(/\s+/g, '')
+            .replace(/[^a-z0-9]/g, '') + '.com';
+          signals.push({
+            domain: guessedDomain,
+            name: companyName,
+            confidence,
+            source: 'about_text',
+          });
+        }
+        break;
       }
     }
   }
 
   // 4. Look for standalone domain mentions
-  const domainRegex = /\b([a-zA-Z0-9][-a-zA-Z0-9]*\.)+(?:com|org|net|io|co|ai|app|dev|tech)\b/gi;
+  const domainRegex = /\b([a-zA-Z0-9][-a-zA-Z0-9]*\.)+(?:com|org|net|io|co|ai|app|dev|tech|so|tv)\b/gi;
   const domainMentions = cleanAbout.match(domainRegex) || [];
+  const skipDomainMentions = ['github.com', 'linkedin.com', 'twitter.com', 'x.com', 'news.ycombinator.com', 'ycombinator.com'];
 
   for (const mention of domainMentions) {
     const domain = normalizeDomain(mention);
-    if (domain && isCompanyDomain(domain)) {
-      result.companyDomain = domain;
-      result.companyName = domainToCompanyName(domain);
-      result.confidence = 0.7;
-      result.source = 'about_text';
-      return result;
+    if (domain && !skipDomainMentions.includes(domain) && isCompanyDomain(domain)) {
+      signals.push({
+        domain,
+        name: domainToCompanyName(domain),
+        confidence: 0.7,
+        source: 'about_text',
+      });
+      break;
     }
   }
+
+  // 5. Multi-signal aggregation
+  if (signals.length === 0) {
+    return result;
+  }
+
+  // If we have multiple signals pointing to the same domain, boost confidence
+  const domainCounts = new Map<string, number>();
+  for (const signal of signals) {
+    if (signal.domain) {
+      domainCounts.set(signal.domain, (domainCounts.get(signal.domain) || 0) + 1);
+    }
+  }
+
+  // Find the best signal (highest confidence, with multi-signal boost)
+  let bestSignal = signals[0];
+  for (const signal of signals) {
+    let adjustedConfidence = signal.confidence;
+    if (signal.domain && domainCounts.get(signal.domain)! > 1) {
+      // Multiple signals agree - boost confidence
+      adjustedConfidence = Math.min(0.95, adjustedConfidence + 0.1);
+    }
+
+    if (adjustedConfidence > bestSignal.confidence) {
+      bestSignal = { ...signal, confidence: adjustedConfidence };
+    }
+  }
+
+  result.companyDomain = bestSignal.domain;
+  result.companyName = bestSignal.name;
+  result.confidence = bestSignal.confidence;
+  result.source = bestSignal.source;
 
   return result;
 }
