@@ -284,7 +284,7 @@ export default function ProspectsPage() {
 
       if (response.ok) {
         const enrichingMsg = data.enriching ? ' - enriching in background...' : '';
-        setAddDomainResult({ type: 'success', message: `Added ${data.prospect.name}${enrichingMsg}` });
+        setAddDomainResult({ type: 'success', message: `Added ${data.prospect.company_name}${enrichingMsg}` });
         setDomainInput('');
         await loadProspects();
         // Auto-close modal after success
@@ -293,7 +293,7 @@ export default function ProspectsPage() {
           setAddDomainResult(null);
         }, 2000);
       } else if (response.status === 409) {
-        setAddDomainResult({ type: 'error', message: `${data.prospect.name} already exists in your list` });
+        setAddDomainResult({ type: 'error', message: `${data.prospect.company_name} already exists in your list` });
       } else {
         setAddDomainResult({ type: 'error', message: data.error || 'Failed to add prospect' });
       }
