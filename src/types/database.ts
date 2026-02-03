@@ -74,7 +74,8 @@ export interface Contact {
   outbound_email_count: number;
   meeting_count: number;
 
-  // Email filtering fields (NEW)
+  // Email filtering fields
+  is_junk: boolean;               // Consolidated junk flag for UI filtering
   is_likely_marketing: boolean;
   is_generic_mailbox: boolean;
   filter_reason: string | null;
