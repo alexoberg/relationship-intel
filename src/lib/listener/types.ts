@@ -11,6 +11,7 @@ import { HelixProduct } from '../helix-sales';
 export type ListenerSourceType =
   | 'hn_post'
   | 'hn_comment'
+  | 'hn_profile'
   | 'news_article'
   | 'reddit_post'
   | 'reddit_comment'
@@ -126,8 +127,11 @@ export interface HNUserCompanyInfo {
   companyDomain: string | null;
   companyName: string | null;
   confidence: number;
-  source: 'about_url' | 'about_text' | 'email_domain';
+  source: 'about_url' | 'about_text' | 'email_domain' | 'linkedin' | 'twitter' | 'github';
   rawAbout: string | null;
+  linkedinUrl?: string | null;
+  twitterHandle?: string | null;
+  githubUsername?: string | null;
 }
 
 export interface HNScanResult {
