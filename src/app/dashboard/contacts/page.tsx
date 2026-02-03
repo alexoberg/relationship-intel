@@ -48,7 +48,8 @@ export default function ContactsPage() {
       .from('contacts')
       .select('*')
       .eq('is_junk', false)  // Filter out junk contacts
-      .order('proximity_score', { ascending: false });
+      .order('enriched', { ascending: false })  // Enriched contacts first
+      .order('proximity_score', { ascending: false, nullsFirst: false });
 
     if (categoryFilter !== 'all') {
       query = query.eq('category', categoryFilter);
