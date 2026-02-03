@@ -363,7 +363,7 @@ export const scanHNProfiles = inngest.createFunction(
           );
 
           const usersToScan = usernames
-            .filter(u => !recentlyScanned.has(u))
+            .filter((u: string) => !recentlyScanned.has(u))
             .slice(0, maxUsersPerStory);
 
           stats.usersSkippedRecent += recentlyScanned.size;
