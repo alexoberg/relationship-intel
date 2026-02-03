@@ -236,7 +236,9 @@ export default function ProspectReviewPage() {
           reviewed: prev.reviewed + 1,
           unreviewed: prev.unreviewed - 1,
         }));
-        moveToNext();
+        // Remove reviewed prospect from the list so it doesn't reappear
+        setProspects(prev => prev.filter(p => p.id !== prospect.id));
+        // Don't increment index since we removed the current item
       }
     } catch (error) {
       console.error('Failed to submit feedback:', error);
@@ -257,7 +259,7 @@ export default function ProspectReviewPage() {
   };
 
   const handleUndo = async () => {
-    if (reviewHistory.length === 0 || currentIndex === 0) return;
+    if (reviewHistory.length === 0) return;
 
     const lastAction = reviewHistory[reviewHistory.length - 1];
 
@@ -280,14 +282,18 @@ export default function ProspectReviewPage() {
             reviewed: prev.reviewed - 1,
             unreviewed: prev.unreviewed + 1,
           }));
+          // Reload the prospects list to get the undone prospect back
+          loadProspects();
         }
       } catch (error) {
         console.error('Failed to undo:', error);
       }
+    } else {
+      // For skips, just go back in index
+      setCurrentIndex(prev => Math.max(0, prev - 1));
     }
 
     setReviewHistory(prev => prev.slice(0, -1));
-    setCurrentIndex(prev => Math.max(0, prev - 1));
   };
 
   const moveToNext = () => {
