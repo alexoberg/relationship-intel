@@ -177,6 +177,7 @@ export default function ListenerPage() {
         // Keep the scanning state for 5 seconds to indicate background work has started
         setTimeout(() => {
           if (source === 'hn') setTriggeringHN(false);
+          else if (source === 'hn_profiles') setTriggeringProfiles(false);
           else setTriggeringRSS(false);
           loadData(); // Refresh the data
         }, 5000);
