@@ -6,6 +6,7 @@ export { functions as prospectFunctions } from './functions/prospect-sync';
 export { functions as contactIngestionFunctions } from './functions/contact-ingestion';
 export { functions as prospectScoringFunctions } from './functions/prospect-scoring';
 export { functions as listenerFunctions } from './functions/listener';
+export { functions as lookalikeFunctions } from './functions/lookalike';
 
 // Aggregate all functions for the serve handler
 import { functions as enrichmentFunctions } from './functions/enrichment';
@@ -14,6 +15,7 @@ import { functions as prospectFunctions } from './functions/prospect-sync';
 import { functions as contactIngestionFunctions } from './functions/contact-ingestion';
 import { functions as prospectScoringFunctions } from './functions/prospect-scoring';
 import { functions as listenerFunctions } from './functions/listener';
+import { functions as lookalikeFunctions } from './functions/lookalike';
 
 export const allFunctions = [
   ...enrichmentFunctions,
@@ -22,4 +24,5 @@ export const allFunctions = [
   ...contactIngestionFunctions,
   ...prospectScoringFunctions,
   ...listenerFunctions,
+  ...lookalikeFunctions,
 ];

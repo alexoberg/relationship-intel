@@ -93,6 +93,16 @@ export interface ListenerScanHNProfilesEvent {
   };
 }
 
+export interface GenerateLookalikesEvent {
+  name: 'prospects/generate-lookalikes';
+  data: {
+    teamId: string;
+    minScore?: number;
+    count?: number;
+    save?: boolean;
+  };
+}
+
 export type InngestEvents =
   | EnrichmentStartedEvent
   | EnrichmentCompletedEvent
@@ -101,4 +111,5 @@ export type InngestEvents =
   | ListenerScanHNEvent
   | ListenerScanRSSEvent
   | ListenerPromoteEvent
-  | ListenerScanHNProfilesEvent;
+  | ListenerScanHNProfilesEvent
+  | GenerateLookalikesEvent;
