@@ -137,7 +137,7 @@ export async function POST(request: NextRequest) {
     // Check if prospect already exists
     const { data: existing } = await adminClient
       .from('prospects')
-      .select('id, name, company_domain')
+      .select('id, company_name, company_domain')
       .eq('team_id', teamId)
       .eq('company_domain', normalizedDomain)
       .single();
@@ -160,7 +160,7 @@ export async function POST(request: NextRequest) {
       .from('prospects')
       .insert({
         team_id: teamId,
-        name: companyName,
+        company_name: companyName,
         company_domain: normalizedDomain,
         status: 'new',
         source: 'manual_domain',
