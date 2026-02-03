@@ -34,14 +34,16 @@ export async function GET(request: NextRequest) {
       return errors.notFound('No teams found');
     }
 
-    // Trigger HN scan
+    // Trigger HN scan with comment processing enabled
+    // This will scan commenter profiles to extract their companies
     const { ids } = await inngest.send({
       name: 'listener/scan-hn',
       data: {
         teamId: team.id,
         scanType: 'all',
         maxItems: 100,
-        includeComments: false,
+        includeComments: true,
+        minScoreForComments: 3, // Only scan comments on high-relevance stories
       },
     });
 
