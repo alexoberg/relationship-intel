@@ -235,17 +235,211 @@ class MetricsCollector {
 export const metrics = new MetricsCollector();
 
 // ============================================
-// FETCH WITH TIMEOUT AND RETRY
+// RATE LIMITER
+// ============================================
+
+/**
+ * Token bucket rate limiter for polite scraping
+ * Allows bursting while enforcing average rate over time
+ */
+export class RateLimiter {
+  private tokens: number;
+  private lastRefill: number;
+  private readonly maxTokens: number;
+  private readonly refillRate: number; // tokens per second
+  private readonly minDelayMs: number;
+
+  constructor(options: {
+    maxTokens?: number;
+    refillRate?: number;
+    minDelayMs?: number;
+  } = {}) {
+    this.maxTokens = options.maxTokens ?? 10;
+    this.refillRate = options.refillRate ?? 2; // 2 requests per second
+    this.minDelayMs = options.minDelayMs ?? 100;
+    this.tokens = this.maxTokens;
+    this.lastRefill = Date.now();
+  }
+
+  private refill(): void {
+    const now = Date.now();
+    const elapsed = (now - this.lastRefill) / 1000;
+    const tokensToAdd = elapsed * this.refillRate;
+    this.tokens = Math.min(this.maxTokens, this.tokens + tokensToAdd);
+    this.lastRefill = now;
+  }
+
+  async acquire(): Promise<void> {
+    this.refill();
+
+    if (this.tokens >= 1) {
+      this.tokens -= 1;
+      // Always add minimum delay for politeness
+      await new Promise(resolve => setTimeout(resolve, this.minDelayMs));
+      return;
+    }
+
+    // Wait until we have a token
+    const waitTime = ((1 - this.tokens) / this.refillRate) * 1000;
+    await new Promise(resolve => setTimeout(resolve, Math.max(waitTime, this.minDelayMs)));
+    this.tokens = 0;
+    this.lastRefill = Date.now();
+  }
+
+  get availableTokens(): number {
+    this.refill();
+    return this.tokens;
+  }
+}
+
+// Global rate limiter for HN API (be polite - 2 req/sec with burst of 10)
+export const hnRateLimiter = new RateLimiter({
+  maxTokens: 10,
+  refillRate: 2,
+  minDelayMs: 200,
+});
+
+// ============================================
+// PROXY ROTATION FOR IP JUMPING
+// ============================================
+
+interface ProxyConfig {
+  url: string;
+  username?: string;
+  password?: string;
+}
+
+/**
+ * Proxy rotator for IP jumping during scraping
+ * Configure via LISTENER_PROXY_URLS environment variable
+ * Format: "http://user:pass@host:port,http://host2:port2,socks5://host3:port3"
+ */
+class ProxyRotator {
+  private proxies: ProxyConfig[] = [];
+  private currentIndex = 0;
+  private failedProxies = new Set<string>();
+  private lastRotation = 0;
+  private readonly rotationIntervalMs: number;
+
+  constructor() {
+    this.rotationIntervalMs = parseInt(process.env.LISTENER_PROXY_ROTATION_MS || '30000', 10);
+    this.loadProxiesFromEnv();
+  }
+
+  private loadProxiesFromEnv(): void {
+    const proxyUrls = process.env.LISTENER_PROXY_URLS;
+    if (!proxyUrls) return;
+
+    const urls = proxyUrls.split(',').map(s => s.trim()).filter(Boolean);
+
+    for (const urlStr of urls) {
+      try {
+        const url = new URL(urlStr);
+        this.proxies.push({
+          url: `${url.protocol}//${url.host}`,
+          username: url.username || undefined,
+          password: url.password || undefined,
+        });
+      } catch {
+        logger.warn('Invalid proxy URL in LISTENER_PROXY_URLS', { url: urlStr.replace(/\/\/.*@/, '//***@') });
+      }
+    }
+
+    if (this.proxies.length > 0) {
+      logger.info(`Loaded ${this.proxies.length} proxies for IP rotation`);
+    }
+  }
+
+  get isEnabled(): boolean {
+    return this.proxies.length > 0;
+  }
+
+  get currentProxy(): ProxyConfig | null {
+    if (this.proxies.length === 0) return null;
+
+    // Auto-rotate periodically
+    const now = Date.now();
+    if (now - this.lastRotation > this.rotationIntervalMs) {
+      this.rotate();
+    }
+
+    return this.proxies[this.currentIndex];
+  }
+
+  rotate(): void {
+    if (this.proxies.length <= 1) return;
+
+    this.currentIndex = (this.currentIndex + 1) % this.proxies.length;
+    this.lastRotation = Date.now();
+
+    // Skip failed proxies
+    let attempts = 0;
+    while (this.failedProxies.has(this.proxies[this.currentIndex].url) && attempts < this.proxies.length) {
+      this.currentIndex = (this.currentIndex + 1) % this.proxies.length;
+      attempts++;
+    }
+
+    logger.debug('Rotated to proxy', {
+      index: this.currentIndex,
+      proxy: this.proxies[this.currentIndex]?.url.replace(/\/\/.*@/, '//***@')
+    });
+  }
+
+  markFailed(proxyUrl: string): void {
+    this.failedProxies.add(proxyUrl);
+    metrics.increment('proxy_failures');
+
+    // Clear failed status after 5 minutes
+    setTimeout(() => {
+      this.failedProxies.delete(proxyUrl);
+    }, 5 * 60 * 1000);
+
+    this.rotate();
+  }
+
+  markSuccess(): void {
+    metrics.increment('proxy_success');
+    const current = this.currentProxy;
+    if (current) {
+      this.failedProxies.delete(current.url);
+    }
+  }
+
+  /**
+   * Get proxy agent options for use with fetch libraries that support proxies
+   * Returns null if no proxies configured
+   */
+  getProxyAgent(): { proxyUrl: string; auth?: { username: string; password: string } } | null {
+    const proxy = this.currentProxy;
+    if (!proxy) return null;
+
+    return {
+      proxyUrl: proxy.url,
+      auth: proxy.username && proxy.password
+        ? { username: proxy.username, password: proxy.password }
+        : undefined,
+    };
+  }
+}
+
+export const proxyRotator = new ProxyRotator();
+
+// ============================================
+// FETCH WITH TIMEOUT, RETRY, AND RATE LIMITING
 // ============================================
 
 interface FetchOptions extends RequestInit {
   timeout?: number;
   retries?: number;
   retryDelay?: number;
+  useRateLimiter?: boolean;
 }
 
 /**
- * Fetch with timeout, retry, and instrumentation
+ * Fetch with timeout, retry, rate limiting, and instrumentation
+ *
+ * For proxy support, configure LISTENER_PROXY_URLS env var and use
+ * a proxy-supporting fetch library like undici or node-fetch with agents
  */
 export async function instrumentedFetch(
   url: string,
@@ -255,17 +449,28 @@ export async function instrumentedFetch(
     timeout = 10000,
     retries = 2,
     retryDelay = 500,
+    useRateLimiter = true,
     ...fetchOptions
   } = options;
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeout);
+  // Apply rate limiting (polite scraping)
+  if (useRateLimiter) {
+    await hnRateLimiter.acquire();
+  }
 
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+
     try {
       const start = performance.now();
+
+      // Track proxy usage for metrics
+      if (proxyRotator.isEnabled) {
+        metrics.increment('requests_via_proxy');
+      }
 
       const response = await fetch(url, {
         ...fetchOptions,
@@ -278,6 +483,21 @@ export async function instrumentedFetch(
 
       if (response.ok) {
         metrics.increment('fetch_success');
+        if (proxyRotator.isEnabled) proxyRotator.markSuccess();
+      } else if (response.status === 429) {
+        // Rate limited - back off and retry
+        metrics.increment('rate_limited');
+        if (proxyRotator.isEnabled) {
+          const proxy = proxyRotator.currentProxy;
+          if (proxy) proxyRotator.markFailed(proxy.url);
+        }
+
+        // Exponential backoff for rate limiting
+        const backoffDelay = retryDelay * Math.pow(2, attempt + 1);
+        logger.warn('Rate limited by server, backing off', { url, backoffDelay, attempt });
+        await new Promise(resolve => setTimeout(resolve, backoffDelay));
+
+        if (attempt < retries) continue;
       } else {
         metrics.increment('fetch_errors');
       }
@@ -292,6 +512,12 @@ export async function instrumentedFetch(
       } else {
         metrics.increment('fetch_errors');
         logger.warn('Fetch failed', { url, attempt, error: lastError.message });
+
+        // Rotate proxy on connection errors
+        if (proxyRotator.isEnabled) {
+          const proxy = proxyRotator.currentProxy;
+          if (proxy) proxyRotator.markFailed(proxy.url);
+        }
       }
 
       if (attempt < retries) {

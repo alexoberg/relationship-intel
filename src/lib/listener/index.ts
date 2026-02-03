@@ -68,7 +68,19 @@ export {
   BoundedCache,
   processBatch,
   processWithConcurrency,
+  RateLimiter,
+  hnRateLimiter,
+  proxyRotator,
 } from './instrumentation';
+
+// Auto-seeding
+export {
+  areKeywordsSeeded,
+  seedKeywords,
+  ensureKeywordsSeeded,
+  hasSuccessfulRun,
+  getListenerStatus,
+} from './auto-seed';
 
 // RSS client
 export {
