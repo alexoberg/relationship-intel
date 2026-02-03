@@ -102,37 +102,63 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Update prospect with review info
-  // NOTE: priority_score is a generated column, don't update it directly
-  const prospectUpdates: Record<string, unknown> = {
-    user_fit_override: isGoodFit,
-    reviewed_at: new Date().toISOString(),
-    reviewed_by: user.id,
-    user_rating: userRating || null,
-    // Also update legacy fields
-    is_good_fit: isGoodFit,
-    feedback_notes: feedbackReason || null,
-    feedback_by: user.id,
-    feedback_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
+  // If not a fit, delete the prospect entirely (user confirmed they don't want it)
+  if (!isGoodFit) {
+    // First clear any foreign key references
+    await adminClient
+      .from('listener_discoveries')
+      .update({ promoted_prospect_id: null })
+      .eq('promoted_prospect_id', prospectId);
 
-  // Update status based on fit assessment
-  if (!isGoodFit && prospect.status === 'new') {
-    prospectUpdates.status = 'not_a_fit';
-  } else if (isGoodFit && prospect.status === 'not_a_fit') {
+    await adminClient
+      .from('prospect_connections')
+      .delete()
+      .eq('prospect_id', prospectId);
+
+    // Delete the prospect
+    const { error: deleteError } = await adminClient
+      .from('prospects')
+      .delete()
+      .eq('id', prospectId);
+
+    if (deleteError) {
+      console.error('Failed to delete prospect:', deleteError);
+      // Fall back to marking as not_a_fit
+      await adminClient
+        .from('prospects')
+        .update({ status: 'not_a_fit' })
+        .eq('id', prospectId);
+    }
+  } else {
+    // Update prospect with review info for good fits
+    // NOTE: priority_score is a generated column, don't update it directly
+    const prospectUpdates: Record<string, unknown> = {
+      user_fit_override: isGoodFit,
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: user.id,
+      user_rating: userRating || null,
+      // Also update legacy fields
+      is_good_fit: isGoodFit,
+      feedback_notes: feedbackReason || null,
+      feedback_by: user.id,
+      feedback_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
     // Restore from not_a_fit if user says it's a good fit
-    prospectUpdates.status = 'new';
-  }
+    if (prospect.status === 'not_a_fit') {
+      prospectUpdates.status = 'new';
+    }
 
-  const { error: updateError } = await adminClient
-    .from('prospects')
-    .update(prospectUpdates)
-    .eq('id', prospectId);
+    const { error: updateError } = await adminClient
+      .from('prospects')
+      .update(prospectUpdates)
+      .eq('id', prospectId);
 
-  if (updateError) {
-    console.error('Failed to update prospect:', updateError);
-    // Don't fail the request, feedback was saved
+    if (updateError) {
+      console.error('Failed to update prospect:', updateError);
+      // Don't fail the request, feedback was saved
+    }
   }
 
   // Log activity

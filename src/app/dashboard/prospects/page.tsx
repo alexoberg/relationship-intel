@@ -6,6 +6,7 @@ import {
   Search,
   Filter,
   ChevronDown,
+  ChevronUp,
   ExternalLink,
   Building,
   Users,
@@ -26,6 +27,7 @@ import {
   PlayCircle,
   Download,
   SlidersHorizontal,
+  ArrowUpDown,
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -107,6 +109,8 @@ export default function ProspectsPage() {
   const [hasWarmIntroFilter, setHasWarmIntroFilter] = useState<boolean | null>(null);
   const [fundingStageFilter, setFundingStageFilter] = useState<string | null>(null);
   const [sourceFilter, setSourceFilter] = useState<string | null>(null);
+  const [sortField, setSortField] = useState<string>('priority_score');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
   const supabase = createClient();
 
@@ -285,6 +289,79 @@ export default function ProspectsPage() {
     return true;
   });
 
+  // Sort prospects
+  const sortedProspects = [...filteredProspects].sort((a, b) => {
+    let aVal: string | number | null = null;
+    let bVal: string | number | null = null;
+
+    switch (sortField) {
+      case 'company_name':
+        aVal = a.company_name?.toLowerCase() || '';
+        bVal = b.company_name?.toLowerCase() || '';
+        break;
+      case 'priority_score':
+        aVal = a.priority_score || 0;
+        bVal = b.priority_score || 0;
+        break;
+      case 'helix_fit_score':
+        aVal = a.helix_fit_score || 0;
+        bVal = b.helix_fit_score || 0;
+        break;
+      case 'connection_score':
+        aVal = a.connection_score || 0;
+        bVal = b.connection_score || 0;
+        break;
+      case 'user_rating':
+        aVal = a.user_rating || 0;
+        bVal = b.user_rating || 0;
+        break;
+      case 'company_industry':
+        aVal = a.company_industry?.toLowerCase() || '';
+        bVal = b.company_industry?.toLowerCase() || '';
+        break;
+      case 'funding_stage':
+        aVal = a.funding_stage?.toLowerCase() || '';
+        bVal = b.funding_stage?.toLowerCase() || '';
+        break;
+      default:
+        aVal = a.priority_score || 0;
+        bVal = b.priority_score || 0;
+    }
+
+    if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
+    if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection('desc');
+    }
+  };
+
+  const SortHeader = ({ field, children }: { field: string; children: React.ReactNode }) => (
+    <th
+      className="px-4 py-3 text-left text-sm font-medium text-gray-600 cursor-pointer hover:bg-gray-100 select-none"
+      onClick={() => handleSort(field)}
+    >
+      <div className="flex items-center gap-1">
+        {children}
+        {sortField === field ? (
+          sortDirection === 'desc' ? (
+            <ChevronDown className="w-4 h-4 text-primary-600" />
+          ) : (
+            <ChevronUp className="w-4 h-4 text-primary-600" />
+          )
+        ) : (
+          <ArrowUpDown className="w-3 h-3 text-gray-400" />
+        )}
+      </div>
+    </th>
+  );
+
   // Get unique values for filter dropdowns
   const uniqueFundingStages = [...new Set(prospects.map(p => p.funding_stage).filter((s): s is string => !!s))];
   const uniqueSources = [...new Set(prospects.map(p => p.source).filter((s): s is string => !!s))];
@@ -298,6 +375,7 @@ export default function ProspectsPage() {
       'Status',
       'Priority Score',
       'Helix Fit Score',
+      'User Rating',
       'Helix Products',
       'Helix Fit Reason',
       'Has Warm Intro',
@@ -307,13 +385,14 @@ export default function ProspectsPage() {
       'Source',
     ];
 
-    const rows = filteredProspects.map(p => [
+    const rows = sortedProspects.map(p => [
       p.company_name || '',
       p.company_domain || '',
       p.company_industry || '',
       p.status || '',
       p.priority_score?.toString() || '',
       p.helix_fit_score?.toString() || '',
+      p.user_rating?.toString() || '',
       (p.helix_products || []).join('; '),
       (p.helix_fit_reason || '').replace(/"/g, '""'), // Escape quotes
       p.has_warm_intro ? 'Yes' : 'No',
@@ -361,15 +440,15 @@ export default function ProspectsPage() {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Helix Prospects</h1>
             <p className="text-gray-600 mt-1">
-              {filteredProspects.length} companies ranked by fit + connections
+              {sortedProspects.length} companies • Sorted by {sortField.replace('_', ' ')} ({sortDirection === 'desc' ? '↓' : '↑'})
             </p>
           </div>
           <div className="flex gap-3">
             <button
               onClick={handleExportCSV}
-              disabled={filteredProspects.length === 0}
+              disabled={sortedProspects.length === 0}
               className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
-              title={`Export ${filteredProspects.length} prospects to CSV`}
+              title={`Export ${sortedProspects.length} prospects to CSV`}
             >
               <Download className="w-4 h-4" />
               Export CSV
@@ -548,7 +627,7 @@ export default function ProspectsPage() {
         <div className="flex-1 bg-white rounded-xl border border-gray-200 overflow-hidden">
           {loading ? (
             <div className="p-8 text-center text-gray-500">Loading...</div>
-          ) : filteredProspects.length === 0 ? (
+          ) : sortedProspects.length === 0 ? (
             <div className="p-8 text-center text-gray-500">
               <Target className="w-12 h-12 mx-auto mb-4 text-gray-300" />
               <p className="font-medium">No prospects yet</p>
@@ -559,15 +638,16 @@ export default function ProspectsPage() {
               <table className="w-full">
                 <thead className="bg-gray-50 sticky top-0">
                   <tr>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Company</th>
+                    <SortHeader field="company_name">Company</SortHeader>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-600 max-w-[200px]">Why Helix</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Connections</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Priority</th>
+                    <SortHeader field="connection_score">Connections</SortHeader>
+                    <SortHeader field="priority_score">Priority</SortHeader>
+                    <SortHeader field="user_rating">Rating</SortHeader>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {filteredProspects.map((prospect) => (
+                  {sortedProspects.map((prospect) => (
                     <tr
                       key={prospect.id}
                       onClick={() => handleSelectProspect(prospect)}
@@ -601,6 +681,13 @@ export default function ProspectsPage() {
                       </td>
                       <td className="px-4 py-3">
                         <PriorityBadge score={prospect.priority_score} />
+                      </td>
+                      <td className="px-4 py-3">
+                        {prospect.user_rating ? (
+                          <RatingBadge rating={prospect.user_rating} />
+                        ) : (
+                          <span className="text-xs text-gray-400">—</span>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <StatusBadge status={prospect.status} />
@@ -899,6 +986,19 @@ function PriorityBadge({ score }: { score: number }) {
     <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold border ${color}`}>
       {icon}
       {score}
+    </span>
+  );
+}
+
+function RatingBadge({ rating }: { rating: number }) {
+  let color = 'bg-gray-100 text-gray-600';
+  if (rating >= 8) color = 'bg-green-100 text-green-700';
+  else if (rating >= 6) color = 'bg-yellow-100 text-yellow-700';
+  else if (rating >= 4) color = 'bg-orange-100 text-orange-700';
+  else color = 'bg-red-100 text-red-700';
+  return (
+    <span className={`inline-flex px-2 py-1 rounded text-xs font-bold ${color}`}>
+      {rating}/10
     </span>
   );
 }

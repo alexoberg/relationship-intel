@@ -66,9 +66,40 @@ HELIX PRODUCTS:
 2. **Voice Captcha** - Unique voice-based human verification. Best for: social platforms (fake account prevention), dating apps (authenticity), marketplaces (trust)
 3. **Age Verification** - Privacy-preserving age gates without collecting DOB. Best for: gaming (age-gated content), gambling, alcohol/cannabis, adult content
 
+CRITICAL REQUIREMENTS FROM SALES TEAM FEEDBACK:
+1. **US-based companies ONLY** - Reject non-US headquartered companies
+2. **Must be actively operating** - Check if company is defunct/bankrupt/shutdown
+3. **Consumer platforms only** - REJECT: B2B SaaS, dev tools, agencies, service businesses, enterprise software
+4. **No "creator tools"** - Tools FOR creators are different from platforms WITH creators (reject the former)
+
+HIGH PRIORITY VERTICALS (score 80+):
+- Prediction markets / betting platforms (Polymarket, Kalshi-style)
+- Collectibles / trading card marketplaces (sports cards, trading cards)
+- Messaging apps with spam problems
+- Age-gated content platforms (adult content, gambling, cannabis)
+- Gaming platforms (especially with child safety/COPPA needs)
+- Ticketing platforms (scalping prevention)
+- Dating apps (authenticity verification)
+- Social networks with bot/fake account problems
+
+MEDIUM PRIORITY (score 60-79):
+- Gig economy / freelance marketplaces
+- E-commerce with limited drops / hype releases
+- Travel platforms (scraping/price manipulation)
+- Streaming platforms
+
+LOW PRIORITY / LIKELY REJECT:
+- Mega-tech (Meta, Google) - too big, won't buy from startup
+- Pure B2B / enterprise software
+- Dev tools / APIs / infrastructure
+- Marketing agencies / creative studios
+- Non-US based companies
+- Defunct / bankrupt companies
+
 For each company, determine:
 - Which specific Helix product(s) fit and WHY (be specific about the use case)
-- If NO clear fit exists, set is_fit to false
+- Score 1-100 based on priority level above
+- If NO clear fit or fails critical requirements, set is_fit to false
 
 Companies: ${JSON.stringify(prospectInfo, null, 2)}
 
@@ -78,13 +109,14 @@ Return JSON:
     {
       "id": "uuid",
       "is_fit": true,
+      "score": 85,
       "products": ["bot_sorter"],
       "reason": "Specific explanation of why this product fits their business"
     }
   ]
 }
 
-Be honest - if you can't articulate a specific use case, set is_fit to false.`;
+Be STRICT - reject companies that don't meet critical requirements.`;
 
     try {
       const response = await anthropic.messages.create({
@@ -126,6 +158,7 @@ Be honest - if you can't articulate a specific use case, set is_fit to false.`;
           await supabase.from('prospects').update({
             helix_products: products,
             helix_fit_reason: result.reason,
+            helix_fit_score: result.score || 70,
           }).eq('id', result.id);
           withFit++;
           console.log(`  ✅ ${batch.find(p => p.id === result.id)?.company_name} - ${result.reason.substring(0, 60)}...`);
