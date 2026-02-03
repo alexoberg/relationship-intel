@@ -2,7 +2,7 @@ import { inngest } from '../client';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { runProspectMatching } from '@/lib/prospect-matching';
 import { detectHelixProductFit, CompanyProfile } from '@/lib/helix-sales';
-import { enrichByLinkedIn, enrichByNameAndCompany } from '@/lib/pdl';
+import { enrichByLinkedIn, enrichByNameAndCompany, enrichCompanyByDomain } from '@/lib/pdl';
 
 const DEFAULT_BATCH_SIZE = 20;
 
@@ -390,7 +390,7 @@ export const enrichProspectContacts = inngest.createFunction(
 );
 
 /**
- * Full prospect pipeline: Score → Swarm → PDL
+ * Full prospect pipeline: Company Enrich → Score → Match → Contact Enrich
  * Runs the complete flow for a new prospect
  */
 export const runProspectPipeline = inngest.createFunction(
@@ -402,6 +402,57 @@ export const runProspectPipeline = inngest.createFunction(
   { event: 'prospects/run-pipeline' },
   async ({ event, step }) => {
     const { prospectId } = event.data;
+    const supabase = createAdminClient();
+
+    // Step 0: Enrich company info from PDL (get real company name, industry, etc.)
+    const companyEnrichment = await step.run('enrich-company', async () => {
+      const { data: prospect } = await supabase
+        .from('prospects')
+        .select('company_domain, company_name')
+        .eq('id', prospectId)
+        .single();
+
+      if (!prospect) return { success: false, error: 'Prospect not found' };
+
+      const result = await enrichCompanyByDomain(prospect.company_domain);
+
+      if (result.success && result.company) {
+        // Update prospect with enriched company data
+        const updates: Record<string, unknown> = {
+          updated_at: new Date().toISOString(),
+        };
+
+        // Use display_name or name from PDL (display_name is usually the proper formatted name)
+        if (result.company.display_name || result.company.name) {
+          updates.company_name = result.company.display_name || result.company.name;
+        }
+        if (result.company.industry) {
+          updates.company_industry = result.company.industry;
+        }
+        if (result.company.size) {
+          updates.company_size = result.company.size;
+        }
+        if (result.company.linkedin_url) {
+          updates.company_linkedin_url = result.company.linkedin_url;
+        }
+        if (result.company.summary) {
+          updates.company_description = result.company.summary;
+        }
+
+        await supabase
+          .from('prospects')
+          .update(updates)
+          .eq('id', prospectId);
+
+        return {
+          success: true,
+          companyName: result.company.display_name || result.company.name,
+          industry: result.company.industry,
+        };
+      }
+
+      return { success: false, error: result.error };
+    });
 
     // Step 1: Score Helix fit
     await step.invoke('score-helix-fit-single', {
@@ -410,7 +461,6 @@ export const runProspectPipeline = inngest.createFunction(
     });
 
     // Step 2: Match to contacts (our logic)
-    const supabase = createAdminClient();
     const { data: prospect } = await step.run('get-prospect', async () => {
       return await supabase
         .from('prospects')
@@ -432,7 +482,12 @@ export const runProspectPipeline = inngest.createFunction(
       data: { prospectId, maxContacts: 5 },
     });
 
-    return { status: 'pipeline_complete', prospectId };
+    return {
+      status: 'pipeline_complete',
+      prospectId,
+      companyEnriched: companyEnrichment.success,
+      companyName: companyEnrichment.success ? companyEnrichment.companyName : undefined,
+    };
   }
 );
 

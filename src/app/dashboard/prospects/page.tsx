@@ -117,6 +117,7 @@ export default function ProspectsPage() {
   const [sortField, setSortField] = useState<string>('priority_score');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [showAddDomainModal, setShowAddDomainModal] = useState(false);
+  const [companyNameInput, setCompanyNameInput] = useState('');
   const [domainInput, setDomainInput] = useState('');
   const [addingDomain, setAddingDomain] = useState(false);
   const [addDomainResult, setAddDomainResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -265,7 +266,7 @@ export default function ProspectsPage() {
 
   const handleAddByDomain = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!domainInput.trim()) return;
+    if (!domainInput.trim() || !companyNameInput.trim()) return;
 
     setAddingDomain(true);
     setAddDomainResult(null);
@@ -276,6 +277,7 @@ export default function ProspectsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'add-by-domain',
+          companyName: companyNameInput.trim(),
           domain: domainInput.trim(),
         }),
       });
@@ -285,6 +287,7 @@ export default function ProspectsPage() {
       if (response.ok) {
         const enrichingMsg = data.enriching ? ' - enriching in background...' : '';
         setAddDomainResult({ type: 'success', message: `Added ${data.prospect.company_name}${enrichingMsg}` });
+        setCompanyNameInput('');
         setDomainInput('');
         await loadProspects();
         // Auto-close modal after success
@@ -1002,6 +1005,7 @@ export default function ProspectsPage() {
               <button
                 onClick={() => {
                   setShowAddDomainModal(false);
+                  setCompanyNameInput('');
                   setDomainInput('');
                   setAddDomainResult(null);
                 }}
@@ -1014,15 +1018,28 @@ export default function ProspectsPage() {
             <form onSubmit={handleAddByDomain} className="p-4">
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Company Name
+                </label>
+                <input
+                  type="text"
+                  value={companyNameInput}
+                  onChange={(e) => setCompanyNameInput(e.target.value)}
+                  placeholder="e.g., The RealReal"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none text-lg"
+                  autoFocus
+                  disabled={addingDomain}
+                />
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
                   Company Domain
                 </label>
                 <input
                   type="text"
                   value={domainInput}
                   onChange={(e) => setDomainInput(e.target.value)}
-                  placeholder="e.g., stripe.com or https://stripe.com"
+                  placeholder="e.g., therealreal.com"
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none text-lg"
-                  autoFocus
                   disabled={addingDomain}
                 />
                 <p className="text-xs text-gray-500 mt-2">
@@ -1052,6 +1069,7 @@ export default function ProspectsPage() {
                   type="button"
                   onClick={() => {
                     setShowAddDomainModal(false);
+                    setCompanyNameInput('');
                     setDomainInput('');
                     setAddDomainResult(null);
                   }}
@@ -1062,7 +1080,7 @@ export default function ProspectsPage() {
                 </button>
                 <button
                   type="submit"
-                  disabled={!domainInput.trim() || addingDomain}
+                  disabled={!domainInput.trim() || !companyNameInput.trim() || addingDomain}
                   className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
                 >
                   {addingDomain ? (

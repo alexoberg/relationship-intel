@@ -115,14 +115,14 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { action, prospects: customProspects, domain } = body;
+  const { action, prospects: customProspects, domain, companyName } = body;
 
-  // Action: add single prospect by domain
-  if (action === 'add-by-domain' && domain) {
+  // Action: add single prospect by name and domain
+  if (action === 'add-by-domain' && domain && companyName) {
     const adminClient = createAdminClient();
 
     // Normalize domain (remove protocol, www, trailing slash)
-    let normalizedDomain = domain
+    const normalizedDomain = domain
       .toLowerCase()
       .replace(/^https?:\/\//, '')
       .replace(/^www\./, '')
@@ -132,6 +132,10 @@ export async function POST(request: NextRequest) {
     // Basic validation
     if (!normalizedDomain || !normalizedDomain.includes('.')) {
       return NextResponse.json({ error: 'Invalid domain format' }, { status: 400 });
+    }
+
+    if (!companyName.trim()) {
+      return NextResponse.json({ error: 'Company name is required' }, { status: 400 });
     }
 
     // Check if prospect already exists
@@ -149,21 +153,14 @@ export async function POST(request: NextRequest) {
       }, { status: 409 });
     }
 
-    // Create the prospect with domain - company name will be derived from domain for now
-    const companyName = normalizedDomain
-      .split('.')[0]
-      .split('-')
-      .map((word: string) => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(' ');
-
     const { data: prospect, error } = await adminClient
       .from('prospects')
       .insert({
         team_id: teamId,
-        company_name: companyName,
+        company_name: companyName.trim(),
         company_domain: normalizedDomain,
         status: 'new',
-        source: 'manual_domain',
+        source: 'manual',
         helix_fit_score: 50, // Default score until enriched
       })
       .select()
@@ -174,7 +171,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    // Trigger the enrichment pipeline to populate company details, Helix fit, and connections
+    // Trigger the enrichment pipeline to populate Helix fit and connections
     await inngest.send({
       name: 'prospects/run-pipeline',
       data: { prospectId: prospect.id },

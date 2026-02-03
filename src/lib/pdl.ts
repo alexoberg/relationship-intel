@@ -1,6 +1,7 @@
 import { PDLPerson, PDLPersonResponse, PDLExperience } from '@/types/database';
 
 const PDL_API_URL = 'https://api.peopledatalabs.com/v5/person/enrich';
+const PDL_COMPANY_API_URL = 'https://api.peopledatalabs.com/v5/company/enrich';
 
 export interface EnrichmentResult {
   success: boolean;
@@ -23,6 +24,87 @@ export async function enrichByNameAndCompany(
   company: string
 ): Promise<EnrichmentResult> {
   return enrichPerson({ name, company });
+}
+
+export interface CompanyEnrichmentResult {
+  success: boolean;
+  company?: {
+    name: string;
+    display_name?: string;
+    industry?: string;
+    size?: string;
+    founded?: number;
+    location?: {
+      locality?: string;
+      region?: string;
+      country?: string;
+    };
+    linkedin_url?: string;
+    website?: string;
+    summary?: string;
+    employee_count?: number;
+  };
+  error?: string;
+}
+
+export async function enrichCompanyByDomain(domain: string): Promise<CompanyEnrichmentResult> {
+  const apiKey = process.env.PDL_API_KEY;
+
+  if (!apiKey) {
+    return { success: false, error: 'PDL API key not configured' };
+  }
+
+  try {
+    const queryParams = new URLSearchParams({
+      website: domain,
+      api_key: apiKey,
+    });
+
+    const response = await fetch(`${PDL_COMPANY_API_URL}?${queryParams}`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+      },
+    });
+
+    if (response.status === 404) {
+      return { success: false, error: 'Company not found in PDL database' };
+    }
+
+    if (response.status === 402) {
+      return { success: false, error: 'PDL credits exhausted' };
+    }
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      return {
+        success: false,
+        error: `PDL API error: ${response.status} - ${errorData.error?.message || 'Unknown error'}`
+      };
+    }
+
+    const data = await response.json();
+    return {
+      success: true,
+      company: {
+        name: data.name,
+        display_name: data.display_name,
+        industry: data.industry,
+        size: data.size,
+        founded: data.founded,
+        location: data.location,
+        linkedin_url: data.linkedin_url,
+        website: data.website,
+        summary: data.summary,
+        employee_count: data.employee_count,
+      }
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: `Failed to enrich company: ${error instanceof Error ? error.message : 'Unknown error'}`
+    };
+  }
 }
 
 async function enrichPerson(params: Record<string, string>): Promise<EnrichmentResult> {
