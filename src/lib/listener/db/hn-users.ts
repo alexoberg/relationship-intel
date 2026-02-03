@@ -101,12 +101,11 @@ export async function upsertHNUser(
 
       // Increment scan count in a separate query (non-critical if it fails)
       if (data) {
-        await supabase
+        supabase
           .from('listener_hn_users')
           .update({ scan_count: (data.scan_count || 1) + 1 })
           .eq('id', data.id)
-          .then(() => {}) // Ignore result
-          .catch(() => {}); // Ignore errors
+          .then(() => {}, () => {}); // Ignore result and errors
       }
 
       return data as ListenerHNUser;
