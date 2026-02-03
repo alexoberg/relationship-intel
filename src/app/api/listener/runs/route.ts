@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { success, errors, withErrorHandling } from '@/lib/api/response';
 import { inngest } from '@/lib/inngest';
 import { listRuns, getRunStats } from '@/lib/listener';
+import { ensureKeywordsSeeded, getListenerStatus } from '@/lib/listener/auto-seed';
 
 /**
  * GET /api/listener/runs
@@ -24,6 +25,7 @@ export async function GET(request: NextRequest) {
     const limit = searchParams.get('limit');
     const offset = searchParams.get('offset');
     const includeStats = searchParams.get('include_stats') === 'true';
+    const includeStatus = searchParams.get('include_status') === 'true';
 
     // Fetch runs
     const result = await listRuns({
@@ -39,10 +41,17 @@ export async function GET(request: NextRequest) {
       stats = await getRunStats();
     }
 
+    // Optionally include listener status (keywords seeded, first run, etc)
+    let listenerStatus = null;
+    if (includeStatus) {
+      listenerStatus = await getListenerStatus();
+    }
+
     return success({
       runs: result.runs,
       total: result.total,
       stats,
+      listenerStatus,
     });
   });
 }
@@ -73,7 +82,7 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const { source, options } = body as {
-      source: 'hn' | 'rss';
+      source: 'hn' | 'rss' | 'hn_profiles';
       options?: {
         scanType?: 'front_page' | 'ask_hn' | 'show_hn' | 'all';
         maxItems?: number;
@@ -84,9 +93,14 @@ export async function POST(request: NextRequest) {
       };
     };
 
-    if (!source || !['hn', 'rss'].includes(source)) {
-      return errors.badRequest('Invalid source. Must be "hn" or "rss"');
+    if (!source || !['hn', 'rss', 'hn_profiles'].includes(source)) {
+      return errors.badRequest('Invalid source. Must be "hn", "hn_profiles", or "rss"');
     }
+
+    // Auto-seed keywords if not already seeded
+    // This ensures the listener can find matches on first run
+    console.log('[Listener] Ensuring keywords are seeded before scan...');
+    await ensureKeywordsSeeded();
 
     // Trigger the appropriate scan
     let eventId: string;
@@ -98,7 +112,22 @@ export async function POST(request: NextRequest) {
           teamId: membership.team_id,
           scanType: options?.scanType || 'all',
           maxItems: options?.maxItems || 100,
-          includeComments: options?.includeComments || false,
+          includeComments: options?.includeComments ?? true, // Default to true now
+        },
+      });
+      eventId = ids[0];
+    } else if (source === 'hn_profiles') {
+      // Trigger dedicated profile scanner
+      const { ids } = await inngest.send({
+        name: 'listener/scan-hn-profiles',
+        data: {
+          teamId: membership.team_id,
+          maxStoriesPerScan: 20,
+          maxUsersPerStory: 100,
+          minKeywordScore: 2,
+          minKarma: 50,
+          minConfidence: 0.5,
+          autoPromoteThreshold: 75,
         },
       });
       eventId = ids[0];

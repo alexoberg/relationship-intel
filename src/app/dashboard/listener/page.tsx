@@ -22,6 +22,7 @@ import {
   AlertCircle,
   CheckCircle,
   Play,
+  Users,
 } from 'lucide-react';
 
 interface Discovery {
@@ -83,6 +84,7 @@ const SOURCE_OPTIONS = [
   { value: 'all', label: 'All Sources' },
   { value: 'hn_post', label: 'HN Post' },
   { value: 'hn_comment', label: 'HN Comment' },
+  { value: 'hn_profile', label: 'HN Profile' },
   { value: 'news_article', label: 'News Article' },
 ];
 
@@ -92,6 +94,7 @@ export default function ListenerPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [triggeringHN, setTriggeringHN] = useState(false);
+  const [triggeringProfiles, setTriggeringProfiles] = useState(false);
   const [triggeringRSS, setTriggeringRSS] = useState(false);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -150,8 +153,9 @@ export default function ListenerPage() {
     setLoading(false);
   };
 
-  const handleTriggerScan = async (source: 'hn' | 'rss') => {
+  const handleTriggerScan = async (source: 'hn' | 'hn_profiles' | 'rss') => {
     if (source === 'hn') setTriggeringHN(true);
+    else if (source === 'hn_profiles') setTriggeringProfiles(true);
     else setTriggeringRSS(true);
 
     try {
@@ -170,6 +174,7 @@ export default function ListenerPage() {
     }
 
     if (source === 'hn') setTriggeringHN(false);
+    else if (source === 'hn_profiles') setTriggeringProfiles(false);
     else setTriggeringRSS(false);
   };
 
@@ -243,6 +248,15 @@ export default function ListenerPage() {
             >
               <Radio className={`w-4 h-4 ${triggeringHN ? 'animate-pulse' : ''}`} />
               {triggeringHN ? 'Scanning...' : 'Scan HN'}
+            </button>
+            <button
+              onClick={() => handleTriggerScan('hn_profiles')}
+              disabled={triggeringProfiles}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-50 border border-purple-200 text-purple-700 rounded-lg hover:bg-purple-100 disabled:opacity-50"
+              title="Scan HN user profiles for company info"
+            >
+              <Users className={`w-4 h-4 ${triggeringProfiles ? 'animate-pulse' : ''}`} />
+              {triggeringProfiles ? 'Scanning...' : 'Scan Profiles'}
             </button>
             <button
               onClick={() => handleTriggerScan('rss')}
@@ -584,6 +598,7 @@ function SourceBadge({ source }: { source: string }) {
   const config: Record<string, { label: string; color: string; icon: typeof Radio }> = {
     hn_post: { label: 'HN Post', color: 'bg-orange-100 text-orange-700', icon: Radio },
     hn_comment: { label: 'HN Comment', color: 'bg-orange-50 text-orange-600', icon: Radio },
+    hn_profile: { label: 'HN Profile', color: 'bg-purple-100 text-purple-700', icon: Users },
     news_article: { label: 'News', color: 'bg-blue-100 text-blue-700', icon: Rss },
   };
   const { label, color, icon: Icon } = config[source] || { label: source, color: 'bg-gray-100 text-gray-700', icon: Radio };

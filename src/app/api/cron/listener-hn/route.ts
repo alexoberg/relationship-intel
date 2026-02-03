@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { success, errors } from '@/lib/api/response';
 import { inngest } from '@/lib/inngest';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { hasSuccessfulRun, ensureKeywordsSeeded } from '@/lib/listener/auto-seed';
 
 // Vercel cron secret for authentication
 const CRON_SECRET = process.env.CRON_SECRET;
@@ -10,6 +11,9 @@ const CRON_SECRET = process.env.CRON_SECRET;
  * GET /api/cron/listener-hn
  * Triggered by Vercel cron to scan Hacker News
  * Schedule: Every hour (0 * * * *)
+ *
+ * NOTE: Cron will only run after the first successful manual run.
+ * This ensures keywords are seeded and the system is properly initialized.
  */
 export async function GET(request: NextRequest) {
   // Verify cron secret if set
@@ -21,8 +25,22 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Get the first team (for now, we'll scan for all teams with one run)
-    // In the future, you might want to have per-team scans
+    // Check if there's been at least one successful run
+    // This ensures keywords are seeded and the system is initialized
+    const hasRun = await hasSuccessfulRun();
+    if (!hasRun) {
+      console.log('[Cron] Skipping HN scan - no successful run yet. Trigger manually first.');
+      return success({
+        message: 'Skipped - trigger first scan manually via dashboard',
+        reason: 'no_successful_run',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Ensure keywords are seeded (should already be from first run)
+    await ensureKeywordsSeeded();
+
+    // Get the first team
     const supabase = createAdminClient();
     const { data: team } = await supabase
       .from('teams')

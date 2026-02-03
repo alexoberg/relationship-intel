@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { success, errors } from '@/lib/api/response';
 import { inngest } from '@/lib/inngest';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { hasSuccessfulRun, ensureKeywordsSeeded } from '@/lib/listener/auto-seed';
 
 // Vercel cron secret for authentication
 const CRON_SECRET = process.env.CRON_SECRET;
@@ -14,6 +15,8 @@ const CRON_SECRET = process.env.CRON_SECRET;
  * This dedicated profile scan extracts company info from HN users
  * who post/comment in relevant threads, then adds their companies
  * as prospects.
+ *
+ * NOTE: Cron will only run after the first successful manual run.
  */
 export async function GET(request: NextRequest) {
   // Verify cron secret if set
@@ -25,6 +28,20 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    // Check if there's been at least one successful run
+    const hasRun = await hasSuccessfulRun();
+    if (!hasRun) {
+      console.log('[Cron] Skipping HN profile scan - no successful run yet. Trigger manually first.');
+      return success({
+        message: 'Skipped - trigger first scan manually via dashboard',
+        reason: 'no_successful_run',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Ensure keywords are seeded
+    await ensureKeywordsSeeded();
+
     // Get the first team
     const supabase = createAdminClient();
     const { data: team } = await supabase
