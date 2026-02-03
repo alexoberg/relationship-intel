@@ -16,6 +16,8 @@ import {
   fetchUser,
   extractCompanyFromProfile,
   getCommenterCompanies,
+  clearCaches,
+  getCacheStats,
 } from '@/lib/listener/clients/hn';
 import {
   extractDomainsFromSource,
@@ -27,6 +29,7 @@ import { scoreDiscovery } from '@/lib/listener/confidence-scorer';
 import { createDiscovery } from '@/lib/listener/db/discoveries';
 import { startRun, completeRun, addRunError, getLastCursor } from '@/lib/listener/db/runs';
 import { DiscoveryCandidate, HNItem, HNUserCompanyInfo } from '@/lib/listener/types';
+import { logger, metrics, timeAsync } from '@/lib/listener/instrumentation';
 
 /**
  * Process a single HN item and create discoveries if relevant
@@ -235,11 +238,25 @@ export const scanHackerNews = inngest.createFunction(
       minScoreForComments = 3, // Only scan comments for high-relevance stories
     } = event.data;
 
+    const scanStartTime = Date.now();
+
+    // Reset metrics for this run
+    metrics.reset();
+
+    logger.info('Starting HN scan', {
+      runId: 'pending',
+      scanType,
+      maxItems,
+      includeComments,
+    });
+
     // Start tracking run
     const runId = await step.run('start-run', async () => {
       const cursor = await getLastCursor('hn');
       return await startRun('hn', 'scheduled', cursor || {});
     });
+
+    logger.info('HN scan run started', { runId, teamId });
 
     const stats = {
       itemsScanned: 0,
@@ -364,16 +381,40 @@ export const scanHackerNews = inngest.createFunction(
         });
       });
 
+      // Log final stats
+      const scanDuration = Date.now() - scanStartTime;
+      const cacheStats = getCacheStats();
+      const metricsSummary = metrics.getSummary();
+
+      logger.info('HN scan completed', {
+        runId,
+        durationMs: scanDuration,
+        ...stats,
+        highRelevanceStoriesProcessed: highRelevanceStories.length,
+        cacheStats,
+        metrics: metricsSummary,
+      });
+
+      // Clear caches after run to free memory
+      clearCaches();
+
       return {
         status: 'completed',
         runId,
         ...stats,
         highRelevanceStoriesProcessed: highRelevanceStories.length,
+        durationMs: scanDuration,
       };
     } catch (error) {
       // Log error and mark run as failed
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       stats.errorDetails.push({ message: errorMessage, timestamp: new Date().toISOString() });
+
+      logger.error('HN scan failed', error, {
+        runId,
+        durationMs: Date.now() - scanStartTime,
+        ...stats,
+      });
 
       await step.run('fail-run', async () => {
         await addRunError(runId, errorMessage);
@@ -386,6 +427,9 @@ export const scanHackerNews = inngest.createFunction(
           errorDetails: stats.errorDetails,
         });
       });
+
+      // Clear caches even on failure
+      clearCaches();
 
       throw error;
     }

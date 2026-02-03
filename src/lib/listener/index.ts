@@ -54,7 +54,21 @@ export {
   getItemUrl,
   timestampToDate,
   getItemText,
+  clearCaches,
+  getCacheStats,
 } from './clients/hn';
+
+// Instrumentation
+export {
+  logger,
+  metrics,
+  timeAsync,
+  timeSync,
+  instrumentedFetch,
+  BoundedCache,
+  processBatch,
+  processWithConcurrency,
+} from './instrumentation';
 
 // RSS client
 export {

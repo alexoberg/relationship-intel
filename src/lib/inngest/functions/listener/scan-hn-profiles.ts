@@ -16,6 +16,8 @@ import {
   fetchUser,
   fetchUsers,
   extractCompanyFromProfile,
+  clearCaches,
+  getCacheStats,
 } from '@/lib/listener/clients/hn';
 import { matchText, getBestMatchContext, getPrimaryCategory } from '@/lib/listener/keyword-matcher';
 import { createDiscovery } from '@/lib/listener/db/discoveries';
@@ -34,6 +36,7 @@ import {
 } from '@/lib/listener/profile-enrichment';
 import { isCompanyDomain, domainToCompanyName } from '@/lib/listener/domain-extractor';
 import { DiscoveryCandidate, HNItem, HNUser, HNUserCompanyInfo } from '@/lib/listener/types';
+import { logger, metrics, timeAsync } from '@/lib/listener/instrumentation';
 
 /**
  * Collect all unique usernames from a story and its comments
@@ -298,10 +301,25 @@ export const scanHNProfiles = inngest.createFunction(
       enrichWithGitHub = false, // Disabled by default (rate limits)
     } = event.data;
 
+    const scanStartTime = Date.now();
+
+    // Reset metrics for this run
+    metrics.reset();
+
+    logger.info('Starting HN profile scan', {
+      runId: 'pending',
+      maxStoriesPerScan,
+      maxUsersPerStory,
+      minKarma,
+      minConfidence,
+    });
+
     // Start tracking run
     const runId = await step.run('start-run', async () => {
       return await startRun('hn_profile', 'scheduled', {});
     });
+
+    logger.info('HN profile scan run started', { runId, teamId });
 
     const stats = {
       storiesProcessed: 0,
@@ -441,15 +459,38 @@ export const scanHNProfiles = inngest.createFunction(
         });
       });
 
+      // Log final stats
+      const scanDuration = Date.now() - scanStartTime;
+      const cacheStats = getCacheStats();
+      const metricsSummary = metrics.getSummary();
+
+      logger.info('HN profile scan completed', {
+        runId,
+        durationMs: scanDuration,
+        ...stats,
+        cacheStats,
+        metrics: metricsSummary,
+      });
+
+      // Clear caches after run to free memory
+      clearCaches();
+
       return {
         status: 'completed',
         runId,
         ...stats,
+        durationMs: scanDuration,
       };
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       stats.errorDetails.push({ message: errorMessage, timestamp: new Date().toISOString() });
+
+      logger.error('HN profile scan failed', error, {
+        runId,
+        durationMs: Date.now() - scanStartTime,
+        ...stats,
+      });
 
       await step.run('fail-run', async () => {
         await addRunError(runId, errorMessage);
@@ -462,6 +503,9 @@ export const scanHNProfiles = inngest.createFunction(
           errorDetails: stats.errorDetails,
         });
       });
+
+      // Clear caches even on failure
+      clearCaches();
 
       throw error;
     }

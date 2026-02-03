@@ -11,25 +11,43 @@ import {
   KeywordCategory,
 } from './types';
 import { HelixProduct } from '../helix-sales';
+import { logger, metrics, timeSync } from './instrumentation';
 
 // ============================================
-// KEYWORD CACHE
+// KEYWORD CACHE WITH PRE-COMPILED PATTERNS
 // ============================================
 
-let keywordCache: ListenerKeyword[] | null = null;
+interface CompiledKeyword extends ListenerKeyword {
+  pattern: RegExp;
+}
+
+let keywordCache: CompiledKeyword[] | null = null;
 let cacheTimestamp: number = 0;
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 /**
- * Load active keywords from database (with caching)
+ * Pre-compile regex patterns for keywords for efficient matching
  */
-export async function loadKeywords(): Promise<ListenerKeyword[]> {
+function compileKeywordPattern(keyword: string): RegExp {
+  // Escape special regex characters
+  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Create pattern with word boundary matching
+  return new RegExp(`(?<=^|[\\s.,;:!?\'"()\\[\\]{}<>/\\\\-])${escaped}(?=[\\s.,;:!?\'"()\\[\\]{}<>/\\\\-]|$)`, 'gi');
+}
+
+/**
+ * Load active keywords from database (with caching and pre-compiled patterns)
+ */
+export async function loadKeywords(): Promise<CompiledKeyword[]> {
   const now = Date.now();
 
   // Return cached if valid
   if (keywordCache && now - cacheTimestamp < CACHE_TTL) {
+    metrics.increment('keyword_cache_hit');
     return keywordCache;
   }
+
+  metrics.increment('keyword_cache_miss');
 
   const supabase = createAdminClient();
   const { data, error } = await supabase
@@ -39,14 +57,21 @@ export async function loadKeywords(): Promise<ListenerKeyword[]> {
     .order('weight', { ascending: false });
 
   if (error) {
-    console.error('Failed to load keywords:', error);
+    logger.error('Failed to load keywords', error);
     // Return cached even if stale, better than nothing
     if (keywordCache) return keywordCache;
     throw error;
   }
 
-  keywordCache = data as ListenerKeyword[];
+  // Pre-compile patterns for each keyword
+  keywordCache = (data as ListenerKeyword[]).map(kw => ({
+    ...kw,
+    pattern: compileKeywordPattern(kw.keyword),
+  }));
+
   cacheTimestamp = now;
+
+  logger.info(`Loaded and compiled ${keywordCache.length} keywords`);
 
   return keywordCache;
 }
@@ -64,77 +89,103 @@ export function clearKeywordCache(): void {
 // ============================================
 
 /**
- * Match text against keywords
+ * Match text against keywords using pre-compiled patterns
  * Returns all matches with their positions and scores
  */
 export function matchKeywords(
   text: string,
-  keywords: ListenerKeyword[]
+  keywords: (ListenerKeyword | CompiledKeyword)[]
 ): MatchResult {
-  const matches: KeywordMatch[] = [];
-  const textLower = text.toLowerCase();
+  const { result, durationMs } = timeSync('matchKeywords', () => {
+    const matches: KeywordMatch[] = [];
 
-  for (const kw of keywords) {
-    const keywordLower = kw.keyword.toLowerCase();
+    for (const kw of keywords) {
+      // Use pre-compiled pattern if available, otherwise fall back to indexOf
+      if ('pattern' in kw && kw.pattern) {
+        // Reset regex lastIndex for global patterns
+        kw.pattern.lastIndex = 0;
 
-    // Find all occurrences
-    let position = textLower.indexOf(keywordLower);
-    while (position !== -1) {
-      // Check word boundaries to avoid partial matches
-      const beforeChar = position > 0 ? textLower[position - 1] : ' ';
-      const afterChar =
-        position + keywordLower.length < textLower.length
-          ? textLower[position + keywordLower.length]
-          : ' ';
+        let match;
+        while ((match = kw.pattern.exec(text)) !== null) {
+          matches.push({
+            keyword: kw.keyword,
+            category: kw.category as KeywordCategory,
+            weight: kw.weight,
+            helixProducts: kw.helix_products as HelixProduct[],
+            matchedText: match[0],
+            position: match.index,
+          });
+        }
+      } else {
+        // Fallback for non-compiled keywords
+        const textLower = text.toLowerCase();
+        const keywordLower = kw.keyword.toLowerCase();
 
-      // Allow matches at word boundaries (space, punctuation, start/end)
-      const isWordBoundary = (char: string) =>
-        /[\s.,;:!?'"()\[\]{}<>\/\\-]/.test(char);
+        let position = textLower.indexOf(keywordLower);
+        while (position !== -1) {
+          const beforeChar = position > 0 ? textLower[position - 1] : ' ';
+          const afterChar =
+            position + keywordLower.length < textLower.length
+              ? textLower[position + keywordLower.length]
+              : ' ';
 
-      if (isWordBoundary(beforeChar) && isWordBoundary(afterChar)) {
-        matches.push({
-          keyword: kw.keyword,
-          category: kw.category as KeywordCategory,
-          weight: kw.weight,
-          helixProducts: kw.helix_products as HelixProduct[],
-          matchedText: text.slice(position, position + keywordLower.length),
-          position,
-        });
+          const isWordBoundary = (char: string) =>
+            /[\s.,;:!?'"()\[\]{}<>\/\\-]/.test(char);
+
+          if (isWordBoundary(beforeChar) && isWordBoundary(afterChar)) {
+            matches.push({
+              keyword: kw.keyword,
+              category: kw.category as KeywordCategory,
+              weight: kw.weight,
+              helixProducts: kw.helix_products as HelixProduct[],
+              matchedText: text.slice(position, position + keywordLower.length),
+              position,
+            });
+          }
+
+          position = textLower.indexOf(keywordLower, position + 1);
+        }
       }
-
-      // Find next occurrence
-      position = textLower.indexOf(keywordLower, position + 1);
     }
+
+    // Calculate total score (sum of weights, but dedupe same keyword)
+    const uniqueKeywords = new Map<string, KeywordMatch>();
+    for (const match of matches) {
+      const existing = uniqueKeywords.get(match.keyword);
+      if (!existing || match.weight > existing.weight) {
+        uniqueKeywords.set(match.keyword, match);
+      }
+    }
+
+    const totalScore = Array.from(uniqueKeywords.values()).reduce(
+      (sum, m) => sum + m.weight,
+      0
+    );
+
+    // Collect unique categories
+    const categories = [...new Set(matches.map(m => m.category))];
+
+    // Collect unique Helix products
+    const suggestedHelixProducts = [
+      ...new Set(matches.flatMap(m => m.helixProducts)),
+    ] as HelixProduct[];
+
+    return {
+      matches,
+      totalScore,
+      categories,
+      suggestedHelixProducts,
+    };
+  }, { textLength: text.length, keywordCount: keywords.length });
+
+  metrics.record('keyword_match_duration_ms', durationMs);
+  metrics.increment('keyword_match_calls');
+
+  if (result.matches.length > 0) {
+    metrics.increment('keyword_matches_found', result.matches.length);
   }
 
-  // Calculate total score (sum of weights, but dedupe same keyword)
-  const uniqueKeywords = new Map<string, KeywordMatch>();
-  for (const match of matches) {
-    const existing = uniqueKeywords.get(match.keyword);
-    if (!existing || match.weight > existing.weight) {
-      uniqueKeywords.set(match.keyword, match);
-    }
-  }
-
-  const totalScore = Array.from(uniqueKeywords.values()).reduce(
-    (sum, m) => sum + m.weight,
-    0
-  );
-
-  // Collect unique categories
-  const categories = [...new Set(matches.map(m => m.category))];
-
-  // Collect unique Helix products
-  const suggestedHelixProducts = [
-    ...new Set(matches.flatMap(m => m.helixProducts)),
-  ] as HelixProduct[];
-
-  return {
-    matches,
-    totalScore,
-    categories,
-    suggestedHelixProducts,
-  };
+  return result;
 }
 
 /**

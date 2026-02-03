@@ -6,6 +6,7 @@
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { HNUserCompanyInfo, HNUser } from '../types';
+import { logger, metrics, timeAsync } from '../instrumentation';
 
 // ============================================
 // TYPES
@@ -43,56 +44,80 @@ export interface ListenerHNUser {
 
 /**
  * Upsert an HN user with extracted company info
+ * Uses a single query with RPC for atomic scan_count increment
  */
 export async function upsertHNUser(
   user: HNUser,
   companyInfo: HNUserCompanyInfo,
   storyContext?: { storyId: number; storyTitle: string }
 ): Promise<ListenerHNUser | null> {
-  const supabase = createAdminClient();
+  const { result, durationMs } = await timeAsync(
+    'upsertHNUser',
+    async () => {
+      const supabase = createAdminClient();
 
-  const upsertData = {
-    hn_username: user.id,
-    hn_karma: user.karma,
-    hn_created_at: user.created ? new Date(user.created * 1000).toISOString() : null,
-    company_domain: companyInfo.companyDomain,
-    company_name: companyInfo.companyName,
-    extraction_confidence: companyInfo.confidence,
-    extraction_source: companyInfo.source,
-    raw_about: companyInfo.rawAbout,
-    linkedin_url: companyInfo.linkedinUrl || null,
-    twitter_handle: companyInfo.twitterHandle || null,
-    github_username: companyInfo.githubUsername || null,
-    last_scanned_at: new Date().toISOString(),
-    ...(storyContext && {
-      last_story_id: storyContext.storyId,
-      last_story_title: storyContext.storyTitle,
-    }),
-  };
+      const upsertData = {
+        hn_username: user.id,
+        hn_karma: user.karma,
+        hn_created_at: user.created ? new Date(user.created * 1000).toISOString() : null,
+        company_domain: companyInfo.companyDomain,
+        company_name: companyInfo.companyName,
+        extraction_confidence: companyInfo.confidence,
+        extraction_source: companyInfo.source,
+        raw_about: companyInfo.rawAbout,
+        linkedin_url: companyInfo.linkedinUrl || null,
+        twitter_handle: companyInfo.twitterHandle || null,
+        github_username: companyInfo.githubUsername || null,
+        last_scanned_at: new Date().toISOString(),
+        ...(storyContext && {
+          last_story_id: storyContext.storyId,
+          last_story_title: storyContext.storyTitle,
+        }),
+      };
 
-  const { data, error } = await supabase
-    .from('listener_hn_users')
-    .upsert(upsertData, {
-      onConflict: 'hn_username',
-      ignoreDuplicates: false,
-    })
-    .select()
-    .single();
+      // First, try to use RPC for atomic upsert with increment (if available)
+      const { data: rpcData, error: rpcError } = await supabase.rpc('upsert_hn_user_with_increment', {
+        p_data: upsertData,
+      });
 
-  if (error) {
-    console.error('Failed to upsert HN user:', error);
-    return null;
-  }
+      if (!rpcError && rpcData) {
+        return rpcData as ListenerHNUser;
+      }
 
-  // Increment scan count on update
-  if (data) {
-    await supabase
-      .from('listener_hn_users')
-      .update({ scan_count: (data.scan_count || 1) + 1 })
-      .eq('id', data.id);
-  }
+      // Fall back to regular upsert + update (2 queries, but handles missing RPC)
+      const { data, error } = await supabase
+        .from('listener_hn_users')
+        .upsert(upsertData, {
+          onConflict: 'hn_username',
+          ignoreDuplicates: false,
+        })
+        .select()
+        .single();
 
-  return data as ListenerHNUser;
+      if (error) {
+        logger.error('Failed to upsert HN user', error, { username: user.id });
+        return null;
+      }
+
+      // Increment scan count in a separate query (non-critical if it fails)
+      if (data) {
+        await supabase
+          .from('listener_hn_users')
+          .update({ scan_count: (data.scan_count || 1) + 1 })
+          .eq('id', data.id)
+          .then(() => {}) // Ignore result
+          .catch(() => {}); // Ignore errors
+      }
+
+      return data as ListenerHNUser;
+    },
+    { username: user.id }
+  );
+
+  metrics.record('db_upsert_user_ms', durationMs);
+  metrics.increment('db_users_upserted');
+
+  return result;
 }
 
 /**
@@ -377,42 +402,53 @@ export async function updateSocialProfiles(
 
 /**
  * Check if we should create a discovery for this domain
- * (checks both existing prospects and recent discoveries)
+ * (checks both existing prospects and recent discoveries in parallel)
  */
 export async function shouldCreateDiscovery(
   domain: string,
   teamId: string
 ): Promise<{ create: boolean; reason: string; existingId?: string }> {
-  const supabase = createAdminClient();
+  const { result, durationMs } = await timeAsync(
+    'shouldCreateDiscovery',
+    async () => {
+      const supabase = createAdminClient();
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-  // Check existing prospects
-  const { data: prospect } = await supabase
-    .from('prospects')
-    .select('id')
-    .eq('company_domain', domain)
-    .eq('team_id', teamId)
-    .single();
+      // Run both checks in parallel for better performance
+      const [prospectResult, discoveryResult] = await Promise.all([
+        supabase
+          .from('prospects')
+          .select('id')
+          .eq('company_domain', domain)
+          .eq('team_id', teamId)
+          .limit(1)
+          .maybeSingle(),
+        supabase
+          .from('listener_discoveries')
+          .select('id')
+          .eq('company_domain', domain)
+          .neq('status', 'dismissed')
+          .gte('discovered_at', sevenDaysAgo)
+          .limit(1)
+          .maybeSingle(),
+      ]);
 
-  if (prospect) {
-    return { create: false, reason: 'already_prospect', existingId: prospect.id };
-  }
+      if (prospectResult.data) {
+        return { create: false, reason: 'already_prospect', existingId: prospectResult.data.id };
+      }
 
-  // Check recent discoveries (last 7 days, not dismissed)
-  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const { data: discovery } = await supabase
-    .from('listener_discoveries')
-    .select('id')
-    .eq('company_domain', domain)
-    .neq('status', 'dismissed')
-    .gte('discovered_at', sevenDaysAgo)
-    .limit(1)
-    .single();
+      if (discoveryResult.data) {
+        return { create: false, reason: 'recent_discovery', existingId: discoveryResult.data.id };
+      }
 
-  if (discovery) {
-    return { create: false, reason: 'recent_discovery', existingId: discovery.id };
-  }
+      return { create: true, reason: 'new' };
+    },
+    { domain }
+  );
 
-  return { create: true, reason: 'new' };
+  metrics.record('db_should_create_discovery_ms', durationMs);
+
+  return result;
 }
 
 // ============================================
@@ -420,7 +456,7 @@ export async function shouldCreateDiscovery(
 // ============================================
 
 /**
- * Get HN user tracking stats
+ * Get HN user tracking stats using efficient SQL aggregation
  */
 export async function getHNUserStats(): Promise<{
   total: number;
@@ -431,57 +467,70 @@ export async function getHNUserStats(): Promise<{
   scannedLast7d: number;
   avgKarma: number;
 }> {
-  const supabase = createAdminClient();
+  const { result, durationMs } = await timeAsync('getHNUserStats', async () => {
+    const supabase = createAdminClient();
 
-  const now = new Date();
-  const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
-  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const now = new Date();
+    const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-  // Get all users for aggregation
-  const { data: users, error } = await supabase
-    .from('listener_hn_users')
-    .select('company_domain, linkedin_url, is_excluded, last_scanned_at, hn_karma');
+    // Try to use RPC for efficient aggregation (single query)
+    const { data: rpcData, error: rpcError } = await supabase.rpc('get_hn_user_stats', {
+      p_one_day_ago: oneDayAgo,
+      p_seven_days_ago: sevenDaysAgo,
+    });
 
-  if (error) {
-    console.error('Failed to get HN user stats:', error);
-    return {
-      total: 0,
-      withCompany: 0,
-      withLinkedIn: 0,
-      excluded: 0,
-      scannedLast24h: 0,
-      scannedLast7d: 0,
-      avgKarma: 0,
-    };
-  }
-
-  let withCompany = 0;
-  let withLinkedIn = 0;
-  let excluded = 0;
-  let scannedLast24h = 0;
-  let scannedLast7d = 0;
-  let totalKarma = 0;
-  let karmaCount = 0;
-
-  for (const user of users || []) {
-    if (user.company_domain) withCompany++;
-    if (user.linkedin_url) withLinkedIn++;
-    if (user.is_excluded) excluded++;
-    if (user.last_scanned_at >= oneDayAgo) scannedLast24h++;
-    if (user.last_scanned_at >= sevenDaysAgo) scannedLast7d++;
-    if (user.hn_karma) {
-      totalKarma += user.hn_karma;
-      karmaCount++;
+    if (!rpcError && rpcData) {
+      return rpcData as {
+        total: number;
+        withCompany: number;
+        withLinkedIn: number;
+        excluded: number;
+        scannedLast24h: number;
+        scannedLast7d: number;
+        avgKarma: number;
+      };
     }
-  }
 
-  return {
-    total: users?.length || 0,
-    withCompany,
-    withLinkedIn,
-    excluded,
-    scannedLast24h,
-    scannedLast7d,
-    avgKarma: karmaCount > 0 ? Math.round(totalKarma / karmaCount) : 0,
-  };
+    // Fallback: Run multiple count queries in parallel (still better than fetching all rows)
+    const [
+      totalResult,
+      withCompanyResult,
+      withLinkedInResult,
+      excludedResult,
+      scannedLast24hResult,
+      scannedLast7dResult,
+      avgKarmaResult,
+    ] = await Promise.all([
+      supabase.from('listener_hn_users').select('*', { count: 'exact', head: true }),
+      supabase.from('listener_hn_users').select('*', { count: 'exact', head: true }).not('company_domain', 'is', null),
+      supabase.from('listener_hn_users').select('*', { count: 'exact', head: true }).not('linkedin_url', 'is', null),
+      supabase.from('listener_hn_users').select('*', { count: 'exact', head: true }).eq('is_excluded', true),
+      supabase.from('listener_hn_users').select('*', { count: 'exact', head: true }).gte('last_scanned_at', oneDayAgo),
+      supabase.from('listener_hn_users').select('*', { count: 'exact', head: true }).gte('last_scanned_at', sevenDaysAgo),
+      // For avg karma, we need to fetch values (but only karma column)
+      supabase.from('listener_hn_users').select('hn_karma').not('hn_karma', 'is', null),
+    ]);
+
+    // Calculate average karma from fetched values
+    let avgKarma = 0;
+    if (avgKarmaResult.data && avgKarmaResult.data.length > 0) {
+      const total = avgKarmaResult.data.reduce((sum, u) => sum + (u.hn_karma || 0), 0);
+      avgKarma = Math.round(total / avgKarmaResult.data.length);
+    }
+
+    return {
+      total: totalResult.count || 0,
+      withCompany: withCompanyResult.count || 0,
+      withLinkedIn: withLinkedInResult.count || 0,
+      excluded: excludedResult.count || 0,
+      scannedLast24h: scannedLast24hResult.count || 0,
+      scannedLast7d: scannedLast7dResult.count || 0,
+      avgKarma,
+    };
+  });
+
+  metrics.record('db_get_stats_ms', durationMs);
+
+  return result;
 }

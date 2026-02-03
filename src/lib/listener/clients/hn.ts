@@ -5,32 +5,64 @@
 
 import { HNItem, HNScanResult, HNUser, HNUserCompanyInfo } from '../types';
 import { extractDomainFromUrl, isCompanyDomain, normalizeDomain, domainToCompanyName } from '../domain-extractor';
+import {
+  BoundedCache,
+  instrumentedFetch,
+  logger,
+  metrics,
+  timeAsync,
+  processWithConcurrency,
+} from '../instrumentation';
 
 const HN_API_BASE = 'https://hacker-news.firebaseio.com/v0';
 
-// Cache for user profiles to avoid re-fetching
-const userCache = new Map<string, HNUser | null>();
-const USER_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
-const userCacheTimestamps = new Map<string, number>();
+// Bounded LRU cache for user profiles (max 2000 entries, 10 min TTL)
+const userCache = new BoundedCache<HNUser | null>(2000, 10 * 60 * 1000);
+
+// Bounded cache for items (max 5000 entries, 5 min TTL)
+const itemCache = new BoundedCache<HNItem | null>(5000, 5 * 60 * 1000);
 
 // ============================================
 // API FUNCTIONS
 // ============================================
 
 /**
- * Fetch a single item by ID
+ * Fetch a single item by ID with caching
  */
 export async function fetchItem(id: number): Promise<HNItem | null> {
+  const cacheKey = `item:${id}`;
+
+  // Check cache first
+  const cached = itemCache.get(cacheKey);
+  if (cached !== null) {
+    return cached;
+  }
+
   try {
-    const response = await fetch(`${HN_API_BASE}/item/${id}.json`);
-    if (!response.ok) return null;
+    const response = await instrumentedFetch(`${HN_API_BASE}/item/${id}.json`, {
+      timeout: 8000,
+      retries: 1,
+    });
+
+    if (!response.ok) {
+      itemCache.set(cacheKey, null);
+      return null;
+    }
 
     const item = await response.json();
-    if (!item || item.deleted || item.dead) return null;
+    if (!item || item.deleted || item.dead) {
+      itemCache.set(cacheKey, null);
+      return null;
+    }
 
-    return item as HNItem;
+    const hnItem = item as HNItem;
+    itemCache.set(cacheKey, hnItem);
+    metrics.increment('hn_items_fetched');
+
+    return hnItem;
   } catch (error) {
-    console.error(`Failed to fetch HN item ${id}:`, error);
+    logger.error(`Failed to fetch HN item ${id}`, error);
+    metrics.increment('hn_item_fetch_errors');
     return null;
   }
 }
@@ -42,88 +74,80 @@ export async function fetchItems(
   ids: number[],
   concurrency: number = 10
 ): Promise<HNItem[]> {
-  const items: HNItem[] = [];
+  if (ids.length === 0) return [];
 
-  // Process in batches to avoid overwhelming the API
-  for (let i = 0; i < ids.length; i += concurrency) {
-    const batch = ids.slice(i, i + concurrency);
-    const results = await Promise.all(batch.map(id => fetchItem(id)));
+  const { result: results, durationMs } = await timeAsync(
+    `fetchItems(${ids.length})`,
+    async () => processWithConcurrency(ids, fetchItem, concurrency),
+    { count: ids.length }
+  );
 
-    for (const item of results) {
-      if (item) items.push(item);
-    }
+  const items = results.filter((item): item is HNItem => item !== null);
 
-    // Small delay between batches
-    if (i + concurrency < ids.length) {
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-  }
+  logger.debug(`Fetched ${items.length}/${ids.length} items`, {
+    operation: 'fetchItems',
+    durationMs,
+    requested: ids.length,
+    received: items.length,
+  });
 
   return items;
+}
+
+/**
+ * Generic helper to fetch story ID lists
+ */
+async function fetchStoryIds(endpoint: string, limit: number, label: string): Promise<number[]> {
+  try {
+    const response = await instrumentedFetch(`${HN_API_BASE}/${endpoint}.json`, {
+      timeout: 10000,
+      retries: 2,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch ${label}`);
+    }
+
+    const ids = await response.json();
+    const result = ids.slice(0, limit);
+
+    logger.debug(`Fetched ${label}`, { count: result.length, limit });
+    metrics.increment(`hn_${label.toLowerCase().replace(/\s+/g, '_')}_fetched`);
+
+    return result;
+  } catch (error) {
+    logger.error(`Failed to fetch ${label}`, error);
+    metrics.increment('hn_story_list_errors');
+    return [];
+  }
 }
 
 /**
  * Fetch top story IDs (front page)
  */
 export async function fetchTopStoryIds(limit: number = 100): Promise<number[]> {
-  try {
-    const response = await fetch(`${HN_API_BASE}/topstories.json`);
-    if (!response.ok) throw new Error('Failed to fetch top stories');
-
-    const ids = await response.json();
-    return ids.slice(0, limit);
-  } catch (error) {
-    console.error('Failed to fetch top story IDs:', error);
-    return [];
-  }
+  return fetchStoryIds('topstories', limit, 'top stories');
 }
 
 /**
  * Fetch new story IDs
  */
 export async function fetchNewStoryIds(limit: number = 100): Promise<number[]> {
-  try {
-    const response = await fetch(`${HN_API_BASE}/newstories.json`);
-    if (!response.ok) throw new Error('Failed to fetch new stories');
-
-    const ids = await response.json();
-    return ids.slice(0, limit);
-  } catch (error) {
-    console.error('Failed to fetch new story IDs:', error);
-    return [];
-  }
+  return fetchStoryIds('newstories', limit, 'new stories');
 }
 
 /**
  * Fetch Ask HN story IDs
  */
 export async function fetchAskHNIds(limit: number = 50): Promise<number[]> {
-  try {
-    const response = await fetch(`${HN_API_BASE}/askstories.json`);
-    if (!response.ok) throw new Error('Failed to fetch Ask HN');
-
-    const ids = await response.json();
-    return ids.slice(0, limit);
-  } catch (error) {
-    console.error('Failed to fetch Ask HN IDs:', error);
-    return [];
-  }
+  return fetchStoryIds('askstories', limit, 'Ask HN');
 }
 
 /**
  * Fetch Show HN story IDs
  */
 export async function fetchShowHNIds(limit: number = 50): Promise<number[]> {
-  try {
-    const response = await fetch(`${HN_API_BASE}/showstories.json`);
-    if (!response.ok) throw new Error('Failed to fetch Show HN');
-
-    const ids = await response.json();
-    return ids.slice(0, limit);
-  } catch (error) {
-    console.error('Failed to fetch Show HN IDs:', error);
-    return [];
-  }
+  return fetchStoryIds('showstories', limit, 'Show HN');
 }
 
 /**
@@ -131,12 +155,18 @@ export async function fetchShowHNIds(limit: number = 50): Promise<number[]> {
  */
 export async function fetchMaxItemId(): Promise<number> {
   try {
-    const response = await fetch(`${HN_API_BASE}/maxitem.json`);
-    if (!response.ok) throw new Error('Failed to fetch max item');
+    const response = await instrumentedFetch(`${HN_API_BASE}/maxitem.json`, {
+      timeout: 5000,
+      retries: 1,
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch max item');
+    }
 
     return await response.json();
   } catch (error) {
-    console.error('Failed to fetch max item ID:', error);
+    logger.error('Failed to fetch max item ID', error);
     return 0;
   }
 }
@@ -297,35 +327,41 @@ export function getItemText(item: HNItem): string {
 // ============================================
 
 /**
- * Fetch a HN user profile by username
+ * Fetch a HN user profile by username with caching
  */
 export async function fetchUser(username: string): Promise<HNUser | null> {
-  // Check cache first
-  const cacheTime = userCacheTimestamps.get(username);
-  if (cacheTime && Date.now() - cacheTime < USER_CACHE_TTL) {
-    return userCache.get(username) || null;
+  const cacheKey = `user:${username}`;
+
+  // Check cache first (BoundedCache handles TTL)
+  const cached = userCache.get(cacheKey);
+  if (cached !== null) {
+    return cached;
   }
 
   try {
-    const response = await fetch(`${HN_API_BASE}/user/${username}.json`);
+    const response = await instrumentedFetch(`${HN_API_BASE}/user/${username}.json`, {
+      timeout: 8000,
+      retries: 1,
+    });
+
     if (!response.ok) {
-      userCache.set(username, null);
-      userCacheTimestamps.set(username, Date.now());
+      userCache.set(cacheKey, null);
       return null;
     }
 
     const user = await response.json();
     if (!user) {
-      userCache.set(username, null);
-      userCacheTimestamps.set(username, Date.now());
+      userCache.set(cacheKey, null);
       return null;
     }
 
-    userCache.set(username, user as HNUser);
-    userCacheTimestamps.set(username, Date.now());
+    userCache.set(cacheKey, user as HNUser);
+    metrics.increment('hn_users_fetched');
+
     return user as HNUser;
   } catch (error) {
-    console.error(`Failed to fetch HN user ${username}:`, error);
+    logger.error(`Failed to fetch HN user ${username}`, error);
+    metrics.increment('hn_user_fetch_errors');
     return null;
   }
 }
@@ -337,24 +373,32 @@ export async function fetchUsers(
   usernames: string[],
   concurrency: number = 5
 ): Promise<Map<string, HNUser>> {
-  const users = new Map<string, HNUser>();
   const uniqueUsernames = [...new Set(usernames)];
+  if (uniqueUsernames.length === 0) return new Map();
 
-  for (let i = 0; i < uniqueUsernames.length; i += concurrency) {
-    const batch = uniqueUsernames.slice(i, i + concurrency);
-    const results = await Promise.all(batch.map(u => fetchUser(u)));
+  const { result: results, durationMs } = await timeAsync(
+    `fetchUsers(${uniqueUsernames.length})`,
+    async () => processWithConcurrency(
+      uniqueUsernames,
+      async (username) => ({ username, user: await fetchUser(username) }),
+      concurrency
+    ),
+    { count: uniqueUsernames.length }
+  );
 
-    for (let j = 0; j < batch.length; j++) {
-      if (results[j]) {
-        users.set(batch[j], results[j]!);
-      }
-    }
-
-    // Small delay between batches
-    if (i + concurrency < uniqueUsernames.length) {
-      await new Promise(resolve => setTimeout(resolve, 100));
+  const users = new Map<string, HNUser>();
+  for (const { username, user } of results) {
+    if (user) {
+      users.set(username, user);
     }
   }
+
+  logger.debug(`Fetched ${users.size}/${uniqueUsernames.length} users`, {
+    operation: 'fetchUsers',
+    durationMs,
+    requested: uniqueUsernames.length,
+    received: users.size,
+  });
 
   return users;
 }
@@ -730,4 +774,30 @@ export async function getCommenterCompanies(
  */
 export function getUserUrl(username: string): string {
   return `https://news.ycombinator.com/user?id=${username}`;
+}
+
+// ============================================
+// CACHE MANAGEMENT
+// ============================================
+
+/**
+ * Get cache statistics
+ */
+export function getCacheStats(): {
+  userCache: { size: number; maxSize: number };
+  itemCache: { size: number; maxSize: number };
+} {
+  return {
+    userCache: { size: userCache.size, maxSize: 2000 },
+    itemCache: { size: itemCache.size, maxSize: 5000 },
+  };
+}
+
+/**
+ * Clear all caches (useful between scan runs)
+ */
+export function clearCaches(): void {
+  userCache.clear();
+  itemCache.clear();
+  logger.info('HN caches cleared');
 }
