@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
-import { Users, Link2, Plus, Copy, Check, Trash2, Crown, User, Loader2, Sparkles } from 'lucide-react';
+import { Users, Link2, Plus, Copy, Check, Trash2, Crown, User, Loader2, Sparkles, ChevronDown, Shield, UserMinus } from 'lucide-react';
 
 interface Team {
   id: string;
@@ -41,6 +41,8 @@ export default function TeamPage() {
   const [newTeamName, setNewTeamName] = useState('');
   const [showNewTeam, setShowNewTeam] = useState(false);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
+  const [memberMenuOpen, setMemberMenuOpen] = useState<string | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -60,6 +62,9 @@ export default function TeamPage() {
   async function loadTeams() {
     setLoading(true);
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      setCurrentUserId(user?.id || null);
+
       const response = await fetch('/api/teams');
       const data = await response.json();
       setTeams(data.teams || []);
@@ -152,6 +157,56 @@ export default function TeamPage() {
     navigator.clipboard.writeText(url);
     setCopiedCode(code);
     setTimeout(() => setCopiedCode(null), 2000);
+  }
+
+  async function updateMemberRole(memberId: string, newRole: 'admin' | 'member') {
+    if (!selectedTeam) return;
+    setMemberMenuOpen(null);
+
+    try {
+      const response = await fetch('/api/teams/members', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          team_id: selectedTeam.id,
+          member_id: memberId,
+          role: newRole
+        })
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        alert(data.error || 'Failed to update role');
+        return;
+      }
+
+      loadTeamData(selectedTeam.id);
+    } catch (err) {
+      console.error('Failed to update member role:', err);
+    }
+  }
+
+  async function removeMember(memberId: string) {
+    if (!selectedTeam) return;
+    if (!confirm('Are you sure you want to remove this member from the team?')) return;
+    setMemberMenuOpen(null);
+
+    try {
+      const response = await fetch(
+        `/api/teams/members?team_id=${selectedTeam.id}&member_id=${memberId}`,
+        { method: 'DELETE' }
+      );
+
+      if (!response.ok) {
+        const data = await response.json();
+        alert(data.error || 'Failed to remove member');
+        return;
+      }
+
+      loadTeamData(selectedTeam.id);
+    } catch (err) {
+      console.error('Failed to remove member:', err);
+    }
   }
 
   const isAdmin = selectedTeam?.role === 'admin';
@@ -266,17 +321,60 @@ export default function TeamPage() {
                     <div>
                       <p className="font-semibold text-dark-900">
                         {member.profile?.full_name || member.profile?.email}
+                        {member.user_id === currentUserId && (
+                          <span className="text-dark-400 font-normal ml-2">(you)</span>
+                        )}
                       </p>
                       <p className="text-sm text-dark-500">{member.profile?.email}</p>
                     </div>
                   </div>
-                  <span className={`badge ${
-                    member.role === 'admin'
-                      ? 'bg-gradient-to-r from-amber-500/10 to-orange-500/10 text-amber-700 border border-amber-200'
-                      : 'bg-dark-100 text-dark-600 border border-dark-200'
-                  }`}>
-                    {member.role === 'admin' ? 'Admin' : 'Member'}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className={`badge ${
+                      member.role === 'admin'
+                        ? 'bg-gradient-to-r from-amber-500/10 to-orange-500/10 text-amber-700 border border-amber-200'
+                        : 'bg-dark-100 text-dark-600 border border-dark-200'
+                    }`}>
+                      {member.role === 'admin' ? 'Admin' : 'Member'}
+                    </span>
+                    {isAdmin && (
+                      <div className="relative">
+                        <button
+                          onClick={() => setMemberMenuOpen(memberMenuOpen === member.id ? null : member.id)}
+                          className="p-2 hover:bg-dark-100 rounded-lg transition-colors"
+                        >
+                          <ChevronDown className="w-4 h-4 text-dark-400" />
+                        </button>
+                        {memberMenuOpen === member.id && (
+                          <div className="absolute right-0 mt-1 w-48 bg-white rounded-lg shadow-lg border border-dark-100 py-1 z-10">
+                            {member.role === 'member' ? (
+                              <button
+                                onClick={() => updateMemberRole(member.id, 'admin')}
+                                className="w-full px-4 py-2 text-left text-sm hover:bg-dark-50 flex items-center gap-2"
+                              >
+                                <Shield className="w-4 h-4 text-amber-500" />
+                                Promote to Admin
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => updateMemberRole(member.id, 'member')}
+                                className="w-full px-4 py-2 text-left text-sm hover:bg-dark-50 flex items-center gap-2"
+                              >
+                                <User className="w-4 h-4 text-dark-400" />
+                                Demote to Member
+                              </button>
+                            )}
+                            <button
+                              onClick={() => removeMember(member.id)}
+                              className="w-full px-4 py-2 text-left text-sm hover:bg-red-50 text-red-600 flex items-center gap-2"
+                            >
+                              <UserMinus className="w-4 h-4" />
+                              Remove from Team
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
