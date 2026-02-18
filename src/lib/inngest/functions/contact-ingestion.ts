@@ -1,71 +1,28 @@
 import { inngest } from '../client';
-import { ingestSwarmContacts } from '@/lib/swarm-ingestion';
 import { createAdminClient } from '@/lib/supabase/admin';
 
 /**
- * Ingest contacts from Swarm network
- * Pulls all profiles from team's network and stores as contacts
+ * Swarm ingestion is disabled.
+ * Contacts are sourced internally from Gmail/Calendar sync and manual CSV imports.
+ * This stub handler exists to gracefully no-op any legacy 'contacts/ingest-swarm' events
+ * that may still be in flight in Inngest queues.
  */
 export const ingestSwarmContactsFunction = inngest.createFunction(
   {
     id: 'ingest-swarm-contacts',
-    name: 'Ingest Contacts from Swarm',
+    name: 'Ingest Contacts from Swarm (Disabled)',
     concurrency: {
       limit: 1,
       key: 'event.data.teamId',
     },
-    retries: 2,
+    retries: 0,
   },
   { event: 'contacts/ingest-swarm' },
-  async ({ event, step }) => {
-    const { teamId, ownerId, maxContacts = 5000 } = event.data;
-
-    // Step 1: Get owner ID if not provided (use team admin)
-    const resolvedOwnerId = await step.run('resolve-owner', async () => {
-      if (ownerId) return ownerId;
-
-      const supabase = createAdminClient();
-      const { data: admin } = await supabase
-        .from('team_members')
-        .select('user_id')
-        .eq('team_id', teamId)
-        .eq('role', 'admin')
-        .limit(1)
-        .single();
-
-      if (!admin) {
-        throw new Error(`No admin found for team ${teamId}`);
-      }
-      return admin.user_id;
-    });
-
-    // Step 2: Ingest contacts from Swarm
-    const result = await step.run('ingest-from-swarm', async () => {
-      return await ingestSwarmContacts(teamId, resolvedOwnerId, { maxContacts });
-    });
-
-    // Step 3: Log summary
-    await step.run('log-result', async () => {
-      console.log(`[Swarm Ingestion] Team ${teamId}: ${result.contactsIngested} new, ${result.contactsUpdated} updated, ${result.errors.length} errors`);
-    });
-
-    // Step 4: Run deduplication
-    if (result.contactsIngested > 0 || result.contactsUpdated > 0) {
-      await step.run('deduplicate-contacts', async () => {
-        await inngest.send({
-          name: 'contacts/deduplicate',
-          data: { teamId },
-        });
-      });
-    }
-
+  async ({ event }) => {
+    console.log(`[Swarm Ingestion] DISABLED — skipping for team ${event.data.teamId}. Use internal contact sync instead.`);
     return {
-      status: result.success ? 'completed' : 'completed_with_errors',
-      contactsIngested: result.contactsIngested,
-      contactsUpdated: result.contactsUpdated,
-      connectionsSaved: result.connectionsSaved,
-      errorCount: result.errors.length,
-      errors: result.errors.slice(0, 10), // First 10 errors
+      status: 'disabled',
+      message: 'Swarm ingestion is disabled. Contacts are sourced internally from Gmail/Calendar sync.',
     };
   }
 );

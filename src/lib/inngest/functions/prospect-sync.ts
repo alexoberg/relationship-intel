@@ -238,10 +238,10 @@ export const importProspects = inngest.createFunction(
         }
       });
 
-      // Trigger Swarm sync
-      await step.run('trigger-swarm-sync', async () => {
+      // Trigger internal prospect matching (no external Swarm API calls)
+      await step.run('trigger-internal-matching', async () => {
         await inngest.send({
-          name: 'prospects/sync-connections',
+          name: 'prospects/match-connections',
           data: { teamId, prospectIds: results.inserted },
         });
       });

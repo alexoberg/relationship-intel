@@ -1,18 +1,13 @@
 import { NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { inngest } from '@/lib/inngest';
-import { testSwarmIngestion } from '@/lib/swarm-ingestion';
 import { success, errors, withErrorHandling } from '@/lib/api';
 
 interface IngestStatusData {
-  swarm: {
-    connected: boolean;
-    totalProfiles?: number;
-    error?: string;
-  };
   stats: {
     totalContacts: number;
     swarmContacts: number;
+    gmailContacts: number;
   };
 }
 
@@ -21,7 +16,7 @@ interface IngestTriggerData {
   teamId: string;
 }
 
-// GET /api/contacts/ingest - Check ingestion status / test connection
+// GET /api/contacts/ingest - Check ingestion status
 export async function GET() {
   return withErrorHandling(async () => {
     const supabase = await createClient();
@@ -33,10 +28,6 @@ export async function GET() {
       return errors.unauthorized();
     }
 
-    // Test Swarm connection
-    const swarmTest = await testSwarmIngestion();
-
-    // Get current stats
     const { data: membership } = await supabase
       .from('team_members')
       .select('team_id')
@@ -52,27 +43,30 @@ export async function GET() {
       .select('*', { count: 'exact', head: true })
       .eq('team_id', membership.team_id);
 
+    // Contacts originally sourced from Swarm CSV imports (already in DB, no live API calls)
     const { count: swarmContactCount } = await supabase
       .from('contacts')
       .select('*', { count: 'exact', head: true })
       .eq('team_id', membership.team_id)
       .eq('source', 'swarm');
 
+    const { count: gmailContactCount } = await supabase
+      .from('contacts')
+      .select('*', { count: 'exact', head: true })
+      .eq('team_id', membership.team_id)
+      .eq('source', 'gmail');
+
     return success<IngestStatusData>({
-      swarm: {
-        connected: swarmTest.connected,
-        totalProfiles: swarmTest.totalProfiles,
-        error: swarmTest.error,
-      },
       stats: {
         totalContacts: contactCount || 0,
         swarmContacts: swarmContactCount || 0,
+        gmailContacts: gmailContactCount || 0,
       },
     });
   });
 }
 
-// POST /api/contacts/ingest - Trigger contact ingestion
+// POST /api/contacts/ingest - Trigger contact ingestion (Gmail/Calendar only)
 export async function POST(request: NextRequest) {
   return withErrorHandling(async () => {
     const supabase = await createClient();
@@ -95,25 +89,32 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json().catch(() => ({}));
-    const { source = 'swarm', maxContacts } = body;
+    const { source = 'gmail', maxContacts } = body;
 
     if (source === 'swarm') {
-      // Trigger Swarm ingestion via Inngest
+      // Swarm ingestion is disabled — contacts are sourced internally
+      return errors.badRequest(
+        'Swarm ingestion is disabled. Contacts are sourced from Gmail/Calendar sync. Use source: "gmail" instead.'
+      );
+    }
+
+    if (source === 'gmail') {
       await inngest.send({
-        name: 'contacts/ingest-swarm',
+        name: 'sync/background-started',
         data: {
-          teamId: membership.team_id,
-          ownerId: user.id,
-          maxContacts: maxContacts || 5000,
+          userId: user.id,
+          accessToken: '', // Will be fetched from stored tokens
+          maxMessages: maxContacts || 500000,
+          triggerEnrichment: true,
         },
       });
 
       return success<IngestTriggerData>({
-        message: 'Swarm ingestion started',
+        message: 'Gmail sync started',
         teamId: membership.team_id,
       });
     }
 
-    return errors.badRequest('Invalid source');
+    return errors.badRequest('Invalid source. Use source: "gmail".');
   });
 }

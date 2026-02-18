@@ -244,29 +244,16 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  // Action: sync all prospects with Swarm
-  // This now does: 1) Ingest contacts from Swarm, 2) Match to prospects
+  // Action: sync all prospects with internal contact matching (no external Swarm API)
   if (action === 'sync-swarm') {
-    // Step 1: Ingest contacts from Swarm network
-    await inngest.send({
-      name: 'contacts/ingest-swarm',
-      data: { 
-        teamId: teamId,
-        ownerId: user.id,
-        maxContacts: 5000,
-      },
-    });
-
-    // Step 2: Match contacts to prospects (runs after ingestion via Inngest)
-    // The contact ingestion function will trigger matching when done
     await inngest.send({
       name: 'prospects/match-connections',
       data: { teamId: teamId },
     });
 
-    return NextResponse.json({ 
-      message: 'Sync started: ingesting contacts then matching to prospects',
-      steps: ['ingest-contacts', 'match-prospects']
+    return NextResponse.json({
+      message: 'Internal contact matching started for all prospects',
+      steps: ['match-prospects']
     });
   }
 
