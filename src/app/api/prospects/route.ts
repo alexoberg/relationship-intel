@@ -259,6 +259,19 @@ export async function POST(request: NextRequest) {
 
   // Action: run full pipeline on specific prospect
   if (action === 'run-pipeline' && body.prospectId) {
+    // Verify prospect belongs to user's team
+    const adminClient = createAdminClient();
+    const { data: prospect } = await adminClient
+      .from('prospects')
+      .select('id')
+      .eq('id', body.prospectId)
+      .eq('team_id', teamId)
+      .single();
+
+    if (!prospect) {
+      return NextResponse.json({ error: 'Prospect not found in your team' }, { status: 404 });
+    }
+
     await inngest.send({
       name: 'prospects/run-pipeline',
       data: { prospectId: body.prospectId },
@@ -273,10 +286,21 @@ export async function POST(request: NextRequest) {
 // PATCH /api/prospects - Update prospect (feedback, status)
 export async function PATCH(request: NextRequest) {
   const supabase = await createClient();
-  
+
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Verify user's team membership
+  const { data: membership } = await supabase
+    .from('team_members')
+    .select('team_id')
+    .eq('user_id', user.id)
+    .single();
+
+  if (!membership) {
+    return NextResponse.json({ error: 'No team found' }, { status: 404 });
   }
 
   const body = await request.json();
@@ -287,7 +311,7 @@ export async function PATCH(request: NextRequest) {
   }
 
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
-  
+
   if (status) updates.status = status;
   if (is_good_fit !== undefined) {
     updates.is_good_fit = is_good_fit;
@@ -296,10 +320,12 @@ export async function PATCH(request: NextRequest) {
   }
   if (feedback_notes) updates.feedback_notes = feedback_notes;
 
+  // Scope update to user's team to prevent cross-team modification
   const { data, error } = await supabase
     .from('prospects')
     .update(updates)
     .eq('id', prospectId)
+    .eq('team_id', membership.team_id)
     .select()
     .single();
 

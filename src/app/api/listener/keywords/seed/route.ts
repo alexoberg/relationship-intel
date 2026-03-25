@@ -67,6 +67,13 @@ export async function POST(request: NextRequest) {
  * GET /api/listener/keywords/seed - Get keyword stats
  */
 export async function GET() {
+  // Auth check: require logged-in user
+  const supabaseAuth = await createClient();
+  const { data: { user } } = await supabaseAuth.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const adminClient = createAdminClient();
 
   const { data: keywords, error } = await adminClient

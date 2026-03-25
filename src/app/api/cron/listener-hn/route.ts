@@ -16,12 +16,14 @@ const CRON_SECRET = process.env.CRON_SECRET;
  * This ensures keywords are seeded and the system is properly initialized.
  */
 export async function GET(request: NextRequest) {
-  // Verify cron secret if set
-  if (CRON_SECRET) {
-    const authHeader = request.headers.get('authorization');
-    if (authHeader !== `Bearer ${CRON_SECRET}`) {
-      return errors.unauthorized();
-    }
+  // Verify cron secret (fail-closed: reject if not configured)
+  if (!CRON_SECRET) {
+    console.error('[Cron] CRON_SECRET not configured - refusing to run');
+    return errors.unauthorized();
+  }
+  const authHeader = request.headers.get('authorization');
+  if (authHeader !== `Bearer ${CRON_SECRET}`) {
+    return errors.unauthorized();
   }
 
   try {

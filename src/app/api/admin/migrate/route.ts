@@ -1,4 +1,3 @@
-import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 import postgres from 'postgres';
 
@@ -29,20 +28,22 @@ const MIGRATIONS: Record<string, string> = {
 
 export async function POST(request: NextRequest) {
   const adminKey = request.headers.get('x-admin-key');
-  if (adminKey !== process.env.SUPABASE_SERVICE_ROLE_KEY?.slice(0, 20)) {
+  const adminApiKey = process.env.ADMIN_API_KEY;
+  if (!adminApiKey || adminKey !== adminApiKey) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { migration, databaseUrl } = await request.json();
-  
+  const { migration } = await request.json();
+
   if (!migration || !MIGRATIONS[migration]) {
-    return NextResponse.json({ 
+    return NextResponse.json({
       error: 'Invalid migration',
       available: Object.keys(MIGRATIONS)
     }, { status: 400 });
   }
 
-  // If DATABASE_URL provided, try to run migration directly
+  // Only use the hardcoded DATABASE_URL from environment (never accept from request body)
+  const databaseUrl = process.env.DATABASE_URL;
   if (databaseUrl) {
     try {
       const sql = postgres(databaseUrl);
@@ -54,16 +55,15 @@ export async function POST(request: NextRequest) {
         message: 'Migration executed successfully'
       });
     } catch (err) {
-      return NextResponse.json({ 
+      return NextResponse.json({
         error: err instanceof Error ? err.message : 'Database error',
-        sql: MIGRATIONS[migration]
       }, { status: 500 });
     }
   }
 
   // Otherwise return SQL for manual execution
   return NextResponse.json({
-    message: 'No DATABASE_URL - run this SQL in Supabase SQL Editor',
+    message: 'No DATABASE_URL env var - run this SQL in Supabase SQL Editor',
     migration,
     sql: MIGRATIONS[migration]
   });
@@ -72,6 +72,6 @@ export async function POST(request: NextRequest) {
 export async function GET() {
   return NextResponse.json({
     available_migrations: Object.keys(MIGRATIONS),
-    usage: 'POST { "migration": "name" } with X-Admin-Key header'
+    usage: 'POST { "migration": "name" } with X-Admin-Key header (ADMIN_API_KEY env var)'
   });
 }

@@ -10,7 +10,8 @@ import { inngest } from '@/lib/inngest';
  */
 export async function POST(request: NextRequest) {
   const key = request.headers.get('x-admin-key');
-  if (key !== process.env.SUPABASE_SERVICE_ROLE_KEY?.slice(0, 20)) {
+  const adminApiKey = process.env.ADMIN_API_KEY;
+  if (!adminApiKey || key !== adminApiKey) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -44,6 +45,6 @@ export async function POST(request: NextRequest) {
 
 export async function GET() {
   return NextResponse.json({
-    usage: 'POST with x-admin-key header and { teamId, ownerId } body to trigger Swarm sync',
+    usage: 'POST with x-admin-key header (ADMIN_API_KEY) and { teamId, ownerId } body to trigger Swarm sync',
   });
 }

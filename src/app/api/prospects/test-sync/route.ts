@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { findConnectionsToProspect, calculateConnectionScore } from '@/lib/prospect-matching';
 
@@ -8,16 +9,33 @@ import { findConnectionsToProspect, calculateConnectionScore } from '@/lib/prosp
  * Previously called The Swarm API — now uses internal contact DB only.
  */
 export async function GET(request: NextRequest) {
+  // Auth check: require logged-in user with team membership
+  const serverClient = await createClient();
+  const { data: { user } } = await serverClient.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Verify user belongs to a team
+  const { data: membership } = await serverClient
+    .from('team_members')
+    .select('team_id')
+    .eq('user_id', user.id)
+    .single();
+
+  if (!membership) {
+    return NextResponse.json({ error: 'No team found' }, { status: 404 });
+  }
+
   const searchParams = request.nextUrl.searchParams;
   const prospectId = searchParams.get('id');
   const domain = searchParams.get('domain');
 
   const supabase = createAdminClient();
 
-  // If domain provided directly, find the team from query param
-  const teamId = searchParams.get('team_id');
-  if (domain && teamId) {
-    const connections = await findConnectionsToProspect(teamId, domain);
+  // If domain provided directly, use the user's team for matching
+  if (domain) {
+    const connections = await findConnectionsToProspect(membership.team_id, domain);
     const score = calculateConnectionScore(connections);
 
     return NextResponse.json({
@@ -34,19 +52,21 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  // Get a prospect to test
+  // Get a prospect to test (scoped to user's team)
   let prospect: { id: string; company_name?: string; name?: string; company_domain: string; team_id: string } | null = null;
   if (prospectId) {
     const { data } = await supabase
       .from('prospects')
       .select('id, company_name, name, company_domain, team_id')
       .eq('id', prospectId)
+      .eq('team_id', membership.team_id)
       .single();
     prospect = data;
   } else {
     const { data } = await supabase
       .from('prospects')
       .select('id, company_name, name, company_domain, team_id')
+      .eq('team_id', membership.team_id)
       .is('matched_at', null)
       .limit(1)
       .single();
